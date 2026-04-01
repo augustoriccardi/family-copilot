@@ -48,7 +48,7 @@ async function createAgent(cfg?: AgentConfigOptions) {
   const agent = new AgentBuilder({
     llm,
     tools: allTools,
-    prompt: cfg?.systemPrompt || SYSTEM_PROMPT,
+    prompt: cfg?.systemPrompt || SYSTEM_PROMPT(),
     checkpointer: postgresCheckpointer,
     approveAllTools: cfg?.approveAllTools || false,
   }).build();

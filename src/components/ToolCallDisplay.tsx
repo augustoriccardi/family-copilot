@@ -26,6 +26,20 @@ const ToolCallItem: React.FC<{
   showApprovalButtons?: boolean;
 }> = ({ name, args, id, approvalCallbacks, showApprovalButtons }) => {
   const [isExpanded, setIsExpanded] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+  const [decision, setDecision] = useState<"allow" | "deny" | null>(null);
+
+  const handleApprove = async (toolId: string) => {
+    setIsLoading(true);
+    setDecision("allow");
+    await approvalCallbacks!.onApprove(toolId);
+  };
+
+  const handleDeny = async (toolId: string) => {
+    setIsLoading(true);
+    setDecision("deny");
+    await approvalCallbacks!.onDeny(toolId);
+  };
 
   return (
     <div className="rounded-r border-l-4 border-gray-200 bg-gray-200/30 p-3">
@@ -34,11 +48,11 @@ const ToolCallItem: React.FC<{
         onClick={() => setIsExpanded(!isExpanded)}
       >
         {isExpanded ? (
-          <ChevronDown className="h-4 w-4 flex-shrink-0 text-gray-600" />
+          <ChevronDown className="h-4 w-4 shrink-0 text-gray-600" />
         ) : (
-          <ChevronRight className="h-4 w-4 flex-shrink-0 text-gray-600" />
+          <ChevronRight className="h-4 w-4 shrink-0 text-gray-600" />
         )}
-        <Settings2Icon className="h-4 w-4 flex-shrink-0 text-gray-600" />
+        <Settings2Icon className="h-4 w-4 shrink-0 text-gray-600" />
         <span className="font-medium text-gray-800">{name}</span>
       </button>
 
@@ -51,20 +65,49 @@ const ToolCallItem: React.FC<{
 
       {showApprovalButtons && id && approvalCallbacks && (
         <div className="mt-3 flex justify-end gap-2">
-          <button
-            onClick={() => approvalCallbacks.onDeny(id)}
-            className="flex items-center gap-1 rounded border border-red-200 px-3 py-1 text-sm font-medium text-red-700 transition-colors hover:bg-red-100"
-          >
-            <X className="h-3 w-3" />
-            Deny
-          </button>
-          <button
-            onClick={() => approvalCallbacks.onApprove(id)}
-            className="flex items-center gap-1 rounded border border-green-200 px-3 py-1 text-sm font-medium text-green-700 transition-colors hover:bg-green-100"
-          >
-            <Check className="h-3 w-3" />
-            Allow
-          </button>
+          {decision ? (
+            <span
+              className={`flex items-center gap-1 text-sm font-medium ${decision === "allow" ? "text-green-700" : "text-red-700"}`}
+            >
+              {isLoading ? (
+                <svg className="h-3 w-3 animate-spin" viewBox="0 0 24 24" fill="none">
+                  <circle
+                    className="opacity-25"
+                    cx="12"
+                    cy="12"
+                    r="10"
+                    stroke="currentColor"
+                    strokeWidth="4"
+                  />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
+                </svg>
+              ) : decision === "allow" ? (
+                <Check className="h-3 w-3" />
+              ) : (
+                <X className="h-3 w-3" />
+              )}
+              {decision === "allow" ? "Allowed" : "Denied"}
+            </span>
+          ) : (
+            <>
+              <button
+                onClick={() => handleDeny(id)}
+                disabled={isLoading}
+                className="flex items-center gap-1 rounded border border-red-200 px-3 py-1 text-sm font-medium text-red-700 transition-colors hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <X className="h-3 w-3" />
+                Deny
+              </button>
+              <button
+                onClick={() => handleApprove(id)}
+                disabled={isLoading}
+                className="flex items-center gap-1 rounded border border-green-200 px-3 py-1 text-sm font-medium text-green-700 transition-colors hover:bg-green-100 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <Check className="h-3 w-3" />
+                Allow
+              </button>
+            </>
+          )}
         </div>
       )}
     </div>

@@ -42,32 +42,14 @@ export async function preparePdfForAI(attachment: FileAttachment): Promise<strin
 }
 
 /**
- * File metadata embedded in content items for UI display after checkpoint serialization
- */
-interface FileMetadata {
-  url: string;
-  key: string;
-  name: string;
-  type: string;
-  size: number;
-}
-
-/**
  * Process file attachments and convert to AI-compatible format
  * @param attachments Array of file attachments
  * @returns Array of content items for LangChain HumanMessage
  */
 export async function processAttachmentsForAI(
   attachments: FileAttachment[],
-): Promise<
-  Array<{ type: string; image_url?: { url: string }; text?: string; file_metadata?: FileMetadata }>
-> {
-  const contentItems: Array<{
-    type: string;
-    image_url?: { url: string };
-    text?: string;
-    file_metadata?: FileMetadata;
-  }> = [];
+): Promise<Array<{ type: string; image_url?: { url: string }; text?: string }>> {
+  const contentItems: Array<{ type: string; image_url?: { url: string }; text?: string }> = [];
 
   for (const attachment of attachments) {
     try {
@@ -80,13 +62,6 @@ export async function processAttachmentsForAI(
         contentItems.push({
           type: "image_url",
           image_url: { url: dataUrl },
-          file_metadata: {
-            url: attachment.url,
-            key: attachment.key,
-            name: attachment.name,
-            type: attachment.type,
-            size: attachment.size,
-          },
         });
       }
       // Process PDFs
@@ -95,13 +70,6 @@ export async function processAttachmentsForAI(
         contentItems.push({
           type: "image_url", // Gemini uses image_url type for PDFs too
           image_url: { url: dataUrl },
-          file_metadata: {
-            url: attachment.url,
-            key: attachment.key,
-            name: attachment.name,
-            type: attachment.type,
-            size: attachment.size,
-          },
         });
       }
       // Process text files (markdown, plain text)
@@ -115,13 +83,6 @@ export async function processAttachmentsForAI(
         contentItems.push({
           type: "text",
           text: `\n\n[Content of ${attachment.name}]:\n${textContent}`,
-          file_metadata: {
-            url: attachment.url,
-            key: attachment.key,
-            name: attachment.name,
-            type: attachment.type,
-            size: attachment.size,
-          },
         });
       }
     } catch (error) {

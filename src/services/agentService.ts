@@ -23,7 +23,7 @@ export async function streamResponse(params: {
   if (opts?.allowTool) {
     const inputs = new Command({
       resume: {
-        action: opts.allowTool === "allow" ? "continue" : "update",
+        action: opts.allowTool === "allow" ? "continue" : "deny",
         data: {},
       },
     });
@@ -129,21 +129,26 @@ async function* generator(
 
 // Helper function to process any AI message and return the appropriate MessageResponse
 function processAIMessage(message: Record<string, unknown>): MessageResponse | null {
-  // Check if this is a tool call (content is array with functionCall)
-  const hasToolCall =
+  const toolCalls =
+    Array.isArray(message.tool_calls) && message.tool_calls.length > 0
+      ? (message.tool_calls as ToolCall[])
+      : undefined;
+
+  // Check if this is a tool call (OpenAI format: tool_calls array, or Gemini format: functionCall in content)
+  const hasGeminiFunctionCall =
     Array.isArray(message.content) &&
     message.content.some(
       (item: unknown) => item && typeof item === "object" && "functionCall" in item,
     );
 
-  if (hasToolCall) {
+  if (toolCalls || hasGeminiFunctionCall) {
     // Return full AIMessageData for tool calls to preserve all information
     return {
       type: "ai",
       data: {
         id: (message.id as string) || Date.now().toString(),
         content: typeof message.content === "string" ? message.content : "",
-        tool_calls: (message.tool_calls as ToolCall[]) || undefined,
+        tool_calls: toolCalls,
         additional_kwargs: (message.additional_kwargs as Record<string, unknown>) || undefined,
         response_metadata: (message.response_metadata as Record<string, unknown>) || undefined,
       },

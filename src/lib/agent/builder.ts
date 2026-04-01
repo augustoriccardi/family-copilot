@@ -105,6 +105,16 @@ export class AgentBuilder {
           goto: "tools",
           update: { messages: [updatedMessage] },
         });
+      } else if (reviewAction === "deny") {
+        const toolMessage = new ToolMessage({
+          name: toolCall.name,
+          content: "Tool execution was denied by the user.",
+          tool_call_id: toolCall.id,
+        });
+        return new Command({
+          goto: "agent",
+          update: { messages: [toolMessage] },
+        });
       } else if (reviewAction === "feedback") {
         const toolMessage = new ToolMessage({
           name: toolCall.name,

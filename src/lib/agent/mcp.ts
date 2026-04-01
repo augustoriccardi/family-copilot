@@ -115,7 +115,6 @@ export async function getMCPTools() {
     // that would cause errors with Google Gemini
     const sanitizedTools = tools.map((tool) => sanitizeTool(tool));
 
-    console.log(`Loaded ${sanitizedTools.length} tools from MCP servers`);
     return sanitizedTools;
   } catch (error) {
     console.error("Failed to get MCP tools:", error);

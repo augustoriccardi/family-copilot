@@ -40,7 +40,7 @@ export const Thread = ({ threadId, onFirstMessageSent }: ThreadProps) => {
 
   if (isLoadingHistory) {
     return (
-      <div className="bg-background/95 supports-[backdrop-filter]:bg-background/60 absolute inset-0 flex items-center justify-center backdrop-blur">
+      <div className="bg-background/95 ssupports-backdrop-filter:bg-background/60 absolute inset-0 flex items-center justify-center backdrop-blur">
         <Loader2 className="text-primary h-8 w-8 animate-spin" />
         <p className="text-muted-foreground mt-2">Loading conversation history...</p>
       </div>
@@ -58,7 +58,7 @@ export const Thread = ({ threadId, onFirstMessageSent }: ThreadProps) => {
               </div>
             </ScrollArea>
           </div>
-          <div className="flex-shrink-0">
+          <div className="shrink-0">
             <div className="w-full p-4 pb-6">
               <div className="mx-auto max-w-3xl">
                 <MessageInput onSendMessage={handleSendMessage} isLoading={isSending} />

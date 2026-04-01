@@ -83,12 +83,16 @@ export async function GET(req: NextRequest) {
             ),
           );
         } finally {
-          controller.close();
+          try {
+            controller.close();
+          } catch {
+            // Controller already closed (client disconnected)
+          }
         }
       })();
     },
     cancel() {
-      // If client disconnects, nothing special yet (LangGraph stream will stop as iteration halts)
+      // Client disconnected — the async loop above will stop on next enqueue attempt
     },
   });
 

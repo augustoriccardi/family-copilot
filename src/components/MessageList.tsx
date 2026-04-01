@@ -53,7 +53,7 @@ const MessageList = ({ messages, approveToolExecution }: MessageListProps) => {
             <AIMessage
               key={getMessageId(message)}
               message={message}
-              showApprovalButtons={index === messages.length - 1} // Show buttons only on the latest AI message
+              showApprovalButtons={index === uniqueMessages.length - 1}
               approvalCallbacks={approvalCallbacks}
             />
           );

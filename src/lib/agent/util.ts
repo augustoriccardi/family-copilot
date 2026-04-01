@@ -148,6 +148,23 @@ function sanitizeSchema(schema: unknown): Record<string, unknown> | unknown {
     }
   }
 
+  // Ensure `required` only references keys that actually exist in `properties`.
+  // Google Gemini (especially 2.0+) rejects schemas where `required` contains
+  // property names that are not defined in `properties`.
+  if (
+    Array.isArray(sanitized.required) &&
+    sanitized.properties &&
+    typeof sanitized.properties === "object" &&
+    !Array.isArray(sanitized.properties)
+  ) {
+    const definedKeys = new Set(Object.keys(sanitized.properties as object));
+    sanitized.required = (sanitized.required as string[]).filter((key) => definedKeys.has(key));
+    // Remove `required` entirely if it ends up empty to keep schemas clean
+    if ((sanitized.required as string[]).length === 0) {
+      delete sanitized.required;
+    }
+  }
+
   return sanitized;
 }
 
@@ -171,5 +188,5 @@ export function sanitizeTool(tool: DynamicStructuredTool): DynamicStructuredTool
 
   return tool;
 }
-export const DEFAULT_MODEL_PROVIDER = "google";
-export const DEFAULT_MODEL_NAME = "gemini-3-flash-preview";
+export const DEFAULT_MODEL_PROVIDER = "openai";
+export const DEFAULT_MODEL_NAME = "gpt-4o";

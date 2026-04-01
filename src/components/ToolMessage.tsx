@@ -113,8 +113,7 @@ export const ToolMessage = ({ message }: ToolMessageProps) => {
   const contentType = detectContentType(content);
   const contentStats = getContentStats(content);
 
-  const handleCopy = async (e: React.MouseEvent) => {
-    e.stopPropagation();
+  const handleCopy = async () => {
     try {
       await navigator.clipboard.writeText(content);
       setCopied(true);
@@ -126,9 +125,12 @@ export const ToolMessage = ({ message }: ToolMessageProps) => {
 
   return (
     <div className="rounded border border-gray-200 bg-gray-50 transition-colors hover:bg-gray-100">
-      <button
+      <div
+        role="button"
+        tabIndex={0}
         className="flex w-full cursor-pointer items-center justify-between p-4 text-left focus:ring-2 focus:ring-blue-500 focus:outline-none focus:ring-inset"
         onClick={() => setOpen((o) => !o)}
+        onKeyDown={(e) => (e.key === "Enter" || e.key === " " ? setOpen((o) => !o) : undefined)}
       >
         <div className="flex items-center space-x-2">
           <span className="font-medium text-gray-900">{displayText}</span>
@@ -136,7 +138,10 @@ export const ToolMessage = ({ message }: ToolMessageProps) => {
         </div>
         <div className="flex items-center space-x-2">
           <button
-            onClick={handleCopy}
+            onClick={(e) => {
+              e.stopPropagation();
+              void handleCopy();
+            }}
             className="rounded p-1 text-gray-500 hover:bg-gray-200 hover:text-gray-700 focus:outline-none"
             title="Copy content"
           >
@@ -152,7 +157,7 @@ export const ToolMessage = ({ message }: ToolMessageProps) => {
             <ChevronRightIcon className="h-4 w-4 text-gray-500 transition-transform" />
           )}
         </div>
-      </button>
+      </div>
 
       {!open && content && (
         <div className="px-4 pb-3">{formatContent(content, contentType, true)}</div>
