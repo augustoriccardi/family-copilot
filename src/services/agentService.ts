@@ -19,10 +19,15 @@ export async function streamResponse(params: {
   const { threadId, userText, opts } = params;
   await ensureThread(threadId, userText);
 
-  // If allowTool is present, use Command with resume action instead of regular inputs
+  // ── CAMINO 1: Reanudación tras aprobación de tool ────────────────────────
+  // Cuando el usuario aprueba o rechaza un tool call, el grafo está PAUSADO
+  // en un interrupt() esperando una respuesta. No hay mensaje nuevo del usuario.
+  // Se usa Command({ resume }) para continuar desde el nodo pausado, NO desde START.
+  // Enviar un HumanMessage en este estado causaría un error de LangGraph.
   if (opts?.allowTool) {
     const inputs = new Command({
       resume: {
+        // "continue" → ejecutar el tool | "deny" → rechazar y volver al agente
         action: opts.allowTool === "allow" ? "continue" : "deny",
         data: {},
       },
@@ -32,9 +37,10 @@ export async function streamResponse(params: {
       model: opts?.model,
       tools: opts?.tools,
       approveAllTools: opts?.approveAllTools,
+      householdId: opts?.householdId,
     });
 
-    // Type assertion needed for Command union with state update in v1
+    // thread_id le indica a LangGraph qué checkpoint reanudar en Postgres
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const iterable = await agent.stream(inputs as any, {
       streamMode: ["updates"],
@@ -44,21 +50,23 @@ export async function streamResponse(params: {
     return generator(iterable);
   }
 
-  // Build multimodal message with attachments
+  // ── CAMINO 2: Mensaje nuevo del usuario ──────────────────────────────────
+  // El grafo arranca desde START con el mensaje del usuario como input.
+  // El content puede ser string simple o array multimodal (texto + imágenes/PDFs).
+  // OpenAI y Gemini aceptan ambos formatos, pero el array es obligatorio para archivos.
   let messageContent: string | Array<{ type: string; text?: string; image_url?: { url: string } }>;
 
   if (opts?.attachments && opts.attachments.length > 0) {
-    // Process attachments and build content array
+    // Multimodal: convertir cada adjunto a bloques { type: "image_url" } o { type: "text" }
     const attachmentContents = await processAttachmentsForAI(opts.attachments);
-
-    // Combine user text with attachment contents
     messageContent = [{ type: "text", text: userText }, ...attachmentContents];
   } else {
-    // Simple text message
+    // Texto puro: string es más limpio y evita overhead de parsing en el LLM
     messageContent = userText;
   }
 
   const inputs = {
+    // MessagesAnnotation espera { messages: BaseMessage[] }
     messages: [new HumanMessage({ content: messageContent })],
   };
 
@@ -66,9 +74,11 @@ export async function streamResponse(params: {
     model: opts?.model,
     tools: opts?.tools,
     approveAllTools: opts?.approveAllTools,
+    householdId: opts?.householdId,
   });
 
-  // Type assertion needed for Command union with state update in v1
+  // thread_id vincula esta ejecución con el historial guardado en Postgres.
+  // LangGraph carga el checkpoint anterior y agrega el nuevo mensaje al estado.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const iterable = await agent.stream(inputs as any, {
     streamMode: ["updates"],
@@ -78,14 +88,34 @@ export async function streamResponse(params: {
   return generator(iterable);
 }
 
-// Helper generator function to process stream chunks
+/**
+ * Nodos cuyos AIMessages se exponen al frontend.
+ * "supervisor" está excluido: solo hace routing (transfer_to_*) y el usuario
+ * no necesita ver esos mensajes internos.
+ */
+const VISIBLE_NODES = new Set([
+  "agent",
+  "calendar",
+  "general",
+  "family",
+  "reminder",
+  "recipe",
+  "shopping",
+]);
+
+// Transforma el stream crudo de LangGraph (formato "updates") en MessageResponse
+// que el frontend puede consumir directamente.
+//
+// LangGraph emite objetos con forma: ["updates", { "<nodeName>": { messages: [...] } }]
+// donde <nodeName> es el nodo del grafo que produjo el update ("agent", "recipe", etc.).
+// También puede emitir ["updates", { "__interrupt__": [...] }] cuando el grafo se pausa.
 async function* generator(
   iterable: AsyncIterable<unknown>,
 ): AsyncGenerator<MessageResponse, void, unknown> {
   for await (const chunk of iterable) {
     if (!chunk) continue;
 
-    // Handle tuple format: [type, data]
+    // LangGraph con streamMode "updates" emite tuplas [tipo, datos]
     if (Array.isArray(chunk) && chunk.length === 2) {
       const [chunkType, chunkData] = chunk;
 
@@ -95,28 +125,59 @@ async function* generator(
         typeof chunkData === "object" &&
         !Array.isArray(chunkData)
       ) {
-        // Handle updates: ['updates', { agent: { messages: [Array] } }]
-        if (
-          "agent" in chunkData &&
-          chunkData.agent &&
-          typeof chunkData.agent === "object" &&
-          !Array.isArray(chunkData.agent) &&
-          "messages" in chunkData.agent
-        ) {
-          const messages = Array.isArray(chunkData.agent.messages)
-            ? chunkData.agent.messages
-            : [chunkData.agent.messages];
+        const updateMap = chunkData as Record<string, unknown>;
+
+        // ── Interrupt: el grafo está pausado esperando aprobación ─────────────
+        // Cuando un subagente necesita aprobación de tool, LangGraph pausa el grafo
+        // y emite { "__interrupt__": [{value: {toolCall}}] } en vez de un nodo normal.
+        // El AIMessage(tool_calls) del subagente NO es visible en el stream del padre
+        // (requeriría subgraphs:true). Extraemos el toolCall del interrupt y lo
+        // emitimos para que el frontend muestre el UI de aprobación.
+        if ("__interrupt__" in updateMap) {
+          const interrupts = updateMap["__interrupt__"];
+          if (Array.isArray(interrupts) && interrupts.length > 0) {
+            const interruptValue = (interrupts[0] as Record<string, unknown>)?.value as
+              | Record<string, unknown>
+              | undefined;
+            const toolCall = interruptValue?.toolCall as ToolCall | undefined;
+            if (toolCall?.id && toolCall?.name) {
+              yield {
+                type: "ai",
+                data: {
+                  id: toolCall.id,
+                  content: "",
+                  tool_calls: [toolCall],
+                },
+              };
+            }
+          }
+          continue;
+        }
+
+        // ── Updates normales: nodos del grafo que produjeron mensajes ────────────
+        // Cada key es el nombre del nodo ("agent", "recipe", "supervisor", etc.).
+        // Solo se exponen los nodos VISIBLES: los que generan respuestas para el usuario.
+        // El nodo "supervisor" se excluye porque solo hace routing interno (transfer_to_*).
+        for (const [nodeName, nodeData] of Object.entries(updateMap)) {
+          // Filtrar nodos de routing (supervisor) y nodos sin mensajes
+          if (!VISIBLE_NODES.has(nodeName)) continue;
+          if (!nodeData || typeof nodeData !== "object" || Array.isArray(nodeData)) continue;
+          if (!("messages" in nodeData)) continue;
+
+          const messages = Array.isArray((nodeData as Record<string, unknown>).messages)
+            ? ((nodeData as Record<string, unknown>).messages as unknown[])
+            : [(nodeData as Record<string, unknown>).messages];
+
           for (const message of messages) {
             if (!message) continue;
 
             const isAIMessage =
-              message?.constructor?.name === "AIMessageChunk" ||
-              message?.constructor?.name === "AIMessage";
+              (message as Record<string, unknown>)?.constructor?.name === "AIMessageChunk" ||
+              (message as Record<string, unknown>)?.constructor?.name === "AIMessage";
 
             if (!isAIMessage) continue;
 
-            const messageWithTools = message as Record<string, unknown>;
-            const processedMessage = processAIMessage(messageWithTools);
+            const processedMessage = processAIMessage(message as Record<string, unknown>);
             if (processedMessage) {
               yield processedMessage;
             }

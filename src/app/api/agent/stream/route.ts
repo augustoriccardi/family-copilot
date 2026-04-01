@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 import { streamResponse } from "@/services/agentService";
 import type { MessageResponse, FileAttachment } from "@/types/message";
+import prisma from "@/lib/database/prisma";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -40,6 +41,16 @@ export async function GET(req: NextRequest) {
 
   // Thread existence handled in service.
 
+  // Look up the thread's household for family subagents
+  let householdId: string | undefined;
+  if (threadId !== "unknown") {
+    const thread = await prisma.thread.findUnique({
+      where: { id: threadId },
+      select: { householdId: true },
+    });
+    householdId = thread?.householdId ?? undefined;
+  }
+
   const encoder = new TextEncoder();
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
@@ -62,6 +73,7 @@ export async function GET(req: NextRequest) {
               allowTool: allowTool || undefined,
               approveAllTools,
               attachments,
+              householdId,
             },
           });
           for await (const chunk of iterable) {

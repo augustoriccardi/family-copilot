@@ -15,7 +15,8 @@ sequenceDiagram
     participant ChatSvc as chatService.ts
     participant Route as /api/agent/stream
     participant AgentSvc as agentService.ts
-    participant LG as LangGraph StateGraph
+    participant Sup as Supervisor LG
+    participant Sub as Subagent (calendar/family/...)
     participant LLM as LLM (OpenAI/Google)
     participant PG as PostgreSQL Checkpointer
 
@@ -30,25 +31,38 @@ sequenceDiagram
     ChatSvc->>Route: new EventSource(GET /api/agent/stream?content=...&threadId=...)
     Note over Route: SSE connection abierta
 
+    Route->>PG: prisma.thread.findUnique → obtiene householdId
     Route->>AgentSvc: streamResponse({ threadId, userText, opts })
     AgentSvc->>PG: ensureThread(threadId)
-    AgentSvc->>LG: ensureAgent() → carga MCP tools
+    AgentSvc->>AgentSvc: ensureAgent({ householdId, ... }) → buildSupervisorGraph()
 
-    Note over AgentSvc,LG: Input: new HumanMessage({ content: userText })
-    AgentSvc->>LG: agent.stream(inputs, { configurable: { thread_id } })
+    Note over AgentSvc,Sup: Input: new HumanMessage({ content: userText })
+    AgentSvc->>Sup: agent.stream(inputs, { configurable: { thread_id } })
 
-    LG->>PG: Carga checkpoint (historial previo)
-    PG-->>LG: Estado restaurado
+    Sup->>PG: Carga checkpoint (historial previo)
+    PG-->>Sup: Estado restaurado
 
     rect rgb(230, 240, 255)
-        Note over LG: Nodo: agent
-        LG->>LLM: callModel(state) con system prompt + historial
-        LLM-->>LG: AIMessage (texto o tool_calls)
+        Note over Sup: Nodo: supervisor
+        Sup->>LLM: callModel con SUPERVISOR_PROMPT + historial
+        LLM-->>Sup: AIMessage con tool_call transfer_to_<agent>
     end
 
-    alt El LLM responde con texto directo
-        LG->>PG: Guarda checkpoint
-        LG-->>AgentSvc: chunk { agent: { messages: [AIMessage] } }
+    Note over Sup: Enruta al subagente correspondiente
+    Sup->>Sub: transfer_to_calendar | transfer_to_family | ...
+
+    rect rgb(230, 255, 230)
+        Note over Sub: Nodo: agent (dentro del subagente)
+        Sub->>LLM: callModel con prompt especializado + herramientas del dominio
+        LLM-->>Sub: AIMessage (texto o tool_calls)
+    end
+
+    alt El subagente responde con texto directo
+        Sub->>PG: Guarda checkpoint
+        Sub-->>Sup: Regresa al supervisor
+        Sup->>LLM: Supervisor decide si continuar o END
+        LLM-->>Sup: AIMessage sin tool_call → END
+        Sup-->>AgentSvc: chunk { family/calendar/...: { messages: [AIMessage] } }
         AgentSvc-->>Route: yield MessageResponse { type: "ai", data: {...} }
         Route-->>ChatSvc: data: { type:"ai", data:{id, content} }\n\n
         ChatSvc-->>Hook: EventSource.onmessage
@@ -58,13 +72,13 @@ sequenceDiagram
         ChatSvc-->>Hook: stream.addEventListener("done")
         Hook->>Hook: setIsSending(false), cierra EventSource
 
-    else El LLM quiere usar una herramienta
+    else El subagente quiere usar una herramienta
         rect rgb(255, 240, 220)
-            Note over LG: Nodo: tool_approval
-            LG->>LG: interrupt() — pausa el grafo
-            LG->>PG: Guarda checkpoint con estado pausado
+            Note over Sub: Nodo: tool_approval
+            Sub->>Sub: interrupt() — pausa el grafo
+            Sub->>PG: Guarda checkpoint con estado pausado
         end
-        LG-->>AgentSvc: chunk con tool_calls
+        Sub-->>AgentSvc: chunk con tool_calls
         AgentSvc-->>Route: yield MessageResponse { type:"ai", tool_calls:[...] }
         Route-->>ChatSvc: SSE chunk con tool_calls
         ChatSvc-->>Hook: onmessage → mensaje con tool_calls
@@ -77,21 +91,22 @@ sequenceDiagram
         ChatSvc->>Route: EventSource GET ...?allowTool=allow&threadId=...
         Route->>AgentSvc: streamResponse({ allowTool: "allow" })
 
-        Note over AgentSvc,LG: Input: Command({ resume: { action: "continue" } })
-        AgentSvc->>LG: agent.stream(Command.resume)
-        LG->>PG: Restaura checkpoint pausado
+        Note over AgentSvc,Sub: Input: Command({ resume: { action: "continue" } })
+        AgentSvc->>Sup: agent.stream(Command.resume)
+        Sup->>PG: Restaura checkpoint pausado
 
         rect rgb(220, 255, 220)
-            Note over LG: Nodo: tools
-            LG->>LG: Ejecuta herramienta MCP
-            LG-->>LG: ToolMessage con resultado
+            Note over Sub: Nodo: tools
+            Sub->>Sub: Ejecuta herramienta (MCP o Prisma)
+            Sub-->>Sub: ToolMessage con resultado
         end
 
-        LG->>LG: Vuelve al nodo agent
-        LG->>LLM: callModel con resultado de la herramienta
-        LLM-->>LG: AIMessage final
-        LG->>PG: Guarda checkpoint final
-        LG-->>AgentSvc: chunk AIMessage final
+        Sub->>Sub: Vuelve al nodo agent
+        Sub->>LLM: callModel con resultado de la herramienta
+        LLM-->>Sub: AIMessage final
+        Sub->>PG: Guarda checkpoint final
+        Sub-->>Sup: Regresa al supervisor → END
+        Sup-->>AgentSvc: chunk AIMessage final
         AgentSvc-->>Route: yield MessageResponse
         Route-->>ChatSvc: SSE chunks + event: done
         ChatSvc-->>Hook: onmessage → acumula respuesta final
@@ -210,6 +225,8 @@ Los parámetros enviados al stream:
 | `approveAllTools` | Saltar aprobación para todas las herramientas    |
 | `attachments`     | JSON con archivos adjuntos                       |
 
+El route también consulta `prisma.thread.householdId` y lo inyecta en los opts para que los subagentes de familia puedan cargar las herramientas correctas.
+
 ---
 
 ### 5. Route SSE — `/api/agent/stream`
@@ -241,7 +258,7 @@ Prepara el input correcto para LangGraph según el contexto:
 
 ```
 ¿allowTool presente?
-  → new Command({ resume: { action: "continue" | "update" } })
+  → new Command({ resume: { action: "continue" | "deny" } })
     (reanuda el grafo pausado por interrupt())
 
 ¿Tiene attachments?
@@ -261,32 +278,48 @@ agent.stream(inputs, {
 });
 ```
 
-El generador interno (`generator()`) filtra los chunks del formato `["updates", { agent: { messages: [...] } }]` y produce objetos `MessageResponse` limpios.
+El generador interno filtra los chunks y produce objetos `MessageResponse` limpios. Solo expone nodos de `VISIBLE_NODES`: `agent`, `calendar`, `general`, `family`, `reminder`, `recipe`, `shopping`.
 
 ---
 
-### 7. LangGraph Agent — `AgentBuilder`
+### 7. LangGraph — Supervisor + Subagentes
 
-**Archivo:** `src/lib/agent/builder.ts`
+**Archivos:** `src/lib/agent/supervisor.ts`, `src/lib/agent/subagents/`
 
-Define un `StateGraph` con el siguiente flujo:
+La aplicación usa una arquitectura **Patrón B (Supervisor + Subagentes)**:
 
 ```
-START → agent → shouldApproveTool ─── tool_calls? ──→ tool_approval → tools ─┐
-                        │                                                       │
-                    no tool_calls                                               │
-                        ↓                                                       │
-                       END ←───────────────────────────────────────────────────┘
+START → supervisor → transfer_to_<X> → <subagente> → supervisor → END
 ```
 
-#### Nodos del grafo
+#### Supervisor
 
-| Nodo                | Responsabilidad                                                     |
-| ------------------- | ------------------------------------------------------------------- |
-| `agent`             | Llama al LLM con el historial completo de mensajes                  |
-| `shouldApproveTool` | Router: ¿hay tool_calls? → `tool_approval`, si no → `END`           |
-| `tool_approval`     | Pausa con `interrupt()` o pasa directo si `approveAllTools=true`    |
-| `tools`             | Ejecuta la herramienta MCP y agrega el resultado como `ToolMessage` |
+- Recibe el mensaje del usuario
+- Su LLM está vinculado a 6 herramientas de transferencia: `transfer_to_calendar`, `transfer_to_general`, `transfer_to_family`, `transfer_to_reminder`, `transfer_to_recipe`, `transfer_to_shopping`
+- Cada tool call devuelve un `Command({ goto: subagentName })`
+- Si el LLM no llama ninguna herramienta → `END`
+
+#### Subagentes
+
+Cada subagente es un `AgentBuilder` compilado con su propio conjunto de herramientas:
+
+| Subagente  | Herramientas                                  |
+| ---------- | --------------------------------------------- |
+| `calendar` | MCP tools con prefijo `google-calendar`       |
+| `general`  | Todos los MCP tools excepto calendar          |
+| `family`   | Prisma: contexto hogar, integrantes, despensa |
+| `reminder` | Prisma: CRUD de recordatorios                 |
+| `recipe`   | Prisma: guardar y buscar recetas              |
+| `shopping` | Prisma: listas de compras                     |
+
+#### Nodos de cada subagente
+
+| Nodo                | Responsabilidad                                                  |
+| ------------------- | ---------------------------------------------------------------- |
+| `agent`             | Llama al LLM con el historial completo de mensajes               |
+| `shouldApproveTool` | Router: ¿hay tool_calls? → `tool_approval`, si no → `END`        |
+| `tool_approval`     | Pausa con `interrupt()` o pasa directo si `approveAllTools=true` |
+| `tools`             | Ejecuta la herramienta y agrega el resultado como `ToolMessage`  |
 
 #### Checkpointer de Postgres
 
@@ -342,9 +375,12 @@ Este es el flujo más complejo del sistema (human-in-the-loop):
 
 ## Almacenamiento
 
-| Dato                         | Almacenamiento                           |
-| ---------------------------- | ---------------------------------------- |
-| Metadata de threads          | Postgres (via Prisma, tabla `Thread`)    |
-| Historial de mensajes        | Postgres (LangGraph checkpointer)        |
-| Configuración de MCP servers | Postgres (via Prisma, tabla `MCPServer`) |
-| Archivos adjuntos            | MinIO / S3-compatible                    |
+| Dato                            | Almacenamiento                           |
+| ------------------------------- | ---------------------------------------- |
+| Metadata de threads             | Postgres (via Prisma, tabla `Thread`)    |
+| householdId del thread          | Postgres (campo `Thread.householdId`)    |
+| Historial de mensajes           | Postgres (LangGraph checkpointer)        |
+| Configuración de MCP servers    | Postgres (via Prisma, tabla `MCPServer`) |
+| Datos del hogar familiar        | Postgres (Household, FamilyMember, …)    |
+| Recetas, compras, recordatorios | Postgres (modelos Family Copilot)        |
+| Archivos adjuntos               | MinIO / S3-compatible                    |

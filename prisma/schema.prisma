@@ -11,35 +11,343 @@ datasource db {
 }
 
 model Thread {
-  id        String   @id @default(uuid())
-  title     String
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id          String     @id @default(uuid())
+  title       String
+  householdId String?
+  household   Household? @relation(fields: [householdId], references: [id])
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
 }
 
 model MCPServer {
-  id        String            @id @default(uuid())
-  name      String            @unique
-  type      MCPServerType
-  enabled   Boolean           @default(true)
+  id           String        @id @default(uuid())
+  name         String        @unique
+  type         MCPServerType
+  enabled      Boolean       @default(true)
   // For stdio servers
-  command   String?
-  args      Json?
-  env       Json?
+  command      String?
+  args         Json?
+  env          Json?
   // For http servers
-  url       String?
-  headers   Json?
+  url          String?
+  headers      Json?
   // OAuth fields (for http servers)
-  requiresAuth  Boolean?      @default(false)
-  authTokens    Json?         // OAuthTokens: { access_token, refresh_token, expires_at, token_type, scope }
-  clientInfo    Json?         // OAuthClientInformation: { client_id, client_secret, ... }
-  codeVerifier  String?       // PKCE code verifier for ongoing OAuth flow
-  oauthStatus   String?       @default("UNKNOWN") // UNKNOWN | NOT_REQUIRED | REQUIRED | CONNECTED | EXPIRED
-  createdAt DateTime          @default(now())
-  updatedAt DateTime          @updatedAt
+  requiresAuth Boolean?      @default(false)
+  authTokens   Json? // OAuthTokens: { access_token, refresh_token, expires_at, token_type, scope }
+  clientInfo   Json? // OAuthClientInformation: { client_id, client_secret, ... }
+  codeVerifier String? // PKCE code verifier for ongoing OAuth flow
+  oauthStatus  String?       @default("UNKNOWN") // UNKNOWN | NOT_REQUIRED | REQUIRED | CONNECTED | EXPIRED
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
 }
 
 enum MCPServerType {
   stdio
   http
+}
+
+// ──────────────────────────────────────────────
+// FAMILY COPILOT — HOGAR
+// ──────────────────────────────────────────────
+
+model Household {
+  id        String   @id @default(cuid())
+  name      String
+  timezone  String   @default("America/Montevideo")
+  currency  String   @default("UYU")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  members        FamilyMember[]
+  preferences    HouseholdPreferences?
+  constraints    FamilyConstraint[]
+  recipes        Recipe[]
+  pantryItems    PantryItem[]
+  shoppingLists  ShoppingList[]
+  calendarEvents CalendarEvent[]
+  reminders      Reminder[]
+  conversations  ConversationMessage[]
+  threads        Thread[]
+
+  @@map("households")
+}
+
+// ──────────────────────────────────────────────
+// MIEMBROS DE LA FAMILIA
+// ──────────────────────────────────────────────
+
+enum FamilyRole {
+  MADRE
+  PADRE
+  HIJO
+  HIJA
+  ABUELO
+  ABUELA
+  OTRO
+}
+
+model FamilyMember {
+  id            String     @id @default(cuid())
+  householdId   String     @map("household_id")
+  name          String
+  nickname      String?
+  role          FamilyRole
+  birthdate     DateTime?
+  schoolName    String?    @map("school_name")
+  notes         String?
+  whatsappPhone String?    @map("whatsapp_phone")
+  createdAt     DateTime   @default(now()) @map("created_at")
+
+  household      Household          @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  constraints    FamilyConstraint[]
+  calendarEvents CalendarEvent[]
+  reminders      Reminder[]
+
+  @@map("family_members")
+}
+
+// ──────────────────────────────────────────────
+// PREFERENCIAS DEL HOGAR
+// ──────────────────────────────────────────────
+
+model HouseholdPreferences {
+  id                   String   @id @default(cuid())
+  householdId          String   @unique @map("household_id")
+  preferredSupermarket String?  @map("preferred_supermarket")
+  weeklyBudget         Decimal? @map("weekly_budget") @db.Decimal(10, 2)
+  shoppingDay          String?  @map("shopping_day")
+  mealStyle            String?  @map("meal_style")
+  dietRules            Json?    @map("diet_rules") @db.JsonB
+  createdAt            DateTime @default(now()) @map("created_at")
+  updatedAt            DateTime @updatedAt @map("updated_at")
+
+  household Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+
+  @@map("household_preferences")
+}
+
+// ──────────────────────────────────────────────
+// RESTRICCIONES FAMILIARES
+// ──────────────────────────────────────────────
+
+enum ConstraintType {
+  ALLERGY
+  DISLIKE
+  MEDICATION
+  SCHEDULE_RULE
+  DIET
+  OTHER
+}
+
+model FamilyConstraint {
+  id          String         @id @default(cuid())
+  householdId String         @map("household_id")
+  memberId    String?        @map("member_id")
+  type        ConstraintType
+  key         String
+  value       String
+  createdAt   DateTime       @default(now()) @map("created_at")
+
+  household Household     @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  member    FamilyMember? @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  @@map("family_constraints")
+}
+
+// ──────────────────────────────────────────────
+// RECETAS
+// ──────────────────────────────────────────────
+
+enum RecipeSourceType {
+  AUDIO
+  IMAGE
+  TEXT
+  LINK
+  MANUAL
+}
+
+model Recipe {
+  id              String           @id @default(cuid())
+  householdId     String           @map("household_id")
+  title           String
+  sourceType      RecipeSourceType @map("source_type")
+  sourceUrl       String?          @map("source_url")
+  description     String?
+  servings        Int?
+  prepTimeMinutes Int?             @map("prep_time_minutes")
+  cookTimeMinutes Int?             @map("cook_time_minutes")
+  tags            String[]         @default([])
+  instructions    String?
+  imageUrl        String?          @map("image_url")
+  createdAt       DateTime         @default(now()) @map("created_at")
+  updatedAt       DateTime         @updatedAt @map("updated_at")
+
+  household         Household          @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  ingredients       RecipeIngredient[]
+  shoppingListItems ShoppingListItem[]
+
+  @@map("recipes")
+}
+
+model RecipeIngredient {
+  id             String   @id @default(cuid())
+  recipeId       String   @map("recipe_id")
+  ingredientName String   @map("ingredient_name")
+  quantity       Decimal? @db.Decimal(10, 2)
+  unit           String?
+  optional       Boolean  @default(false)
+  category       String?
+
+  recipe Recipe @relation(fields: [recipeId], references: [id], onDelete: Cascade)
+
+  @@map("recipe_ingredients")
+}
+
+// ──────────────────────────────────────────────
+// DESPENSA
+// ──────────────────────────────────────────────
+
+model PantryItem {
+  id             String    @id @default(cuid())
+  householdId    String    @map("household_id")
+  itemName       String    @map("item_name")
+  quantity       Decimal?  @db.Decimal(10, 2)
+  unit           String?
+  expirationDate DateTime? @map("expiration_date")
+  category       String?
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  household Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+
+  @@map("pantry_items")
+}
+
+// ──────────────────────────────────────────────
+// LISTAS DE COMPRAS
+// ──────────────────────────────────────────────
+
+enum ShoppingListStatus {
+  DRAFT
+  ACTIVE
+  PURCHASED
+}
+
+enum ShoppingListSource {
+  MANUAL
+  MEAL_PLAN
+  RECIPE
+  AUTO
+}
+
+model ShoppingList {
+  id          String             @id @default(cuid())
+  householdId String             @map("household_id")
+  name        String
+  status      ShoppingListStatus @default(DRAFT)
+  sourceType  ShoppingListSource @default(MANUAL) @map("source_type")
+  createdAt   DateTime           @default(now()) @map("created_at")
+  updatedAt   DateTime           @updatedAt @map("updated_at")
+
+  household Household          @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  items     ShoppingListItem[]
+
+  @@map("shopping_lists")
+}
+
+model ShoppingListItem {
+  id             String   @id @default(cuid())
+  shoppingListId String   @map("shopping_list_id")
+  itemName       String   @map("item_name")
+  quantity       Decimal? @db.Decimal(10, 2)
+  unit           String?
+  category       String?
+  sourceRecipeId String?  @map("source_recipe_id")
+  isPurchased    Boolean  @default(false) @map("is_purchased")
+  notes          String?
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  shoppingList ShoppingList @relation(fields: [shoppingListId], references: [id], onDelete: Cascade)
+  sourceRecipe Recipe?      @relation(fields: [sourceRecipeId], references: [id], onDelete: SetNull)
+
+  @@map("shopping_list_items")
+}
+
+// ──────────────────────────────────────────────
+// CALENDARIO
+// ──────────────────────────────────────────────
+
+model CalendarEvent {
+  id             String   @id @default(cuid())
+  householdId    String   @map("household_id")
+  googleEventId  String?  @unique @map("google_event_id")
+  memberId       String?  @map("member_id")
+  title          String
+  description    String?
+  startsAt       DateTime @map("starts_at")
+  endsAt         DateTime @map("ends_at")
+  location       String?
+  isRecurring    Boolean  @default(false) @map("is_recurring")
+  recurrenceRule String?  @map("recurrence_rule")
+  notes          String?
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  household Household     @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  member    FamilyMember? @relation(fields: [memberId], references: [id], onDelete: SetNull)
+
+  @@map("calendar_events")
+}
+
+// ──────────────────────────────────────────────
+// RECORDATORIOS
+// ──────────────────────────────────────────────
+
+enum ReminderStatus {
+  PENDING
+  SENT
+  DONE
+  DISMISSED
+}
+
+model Reminder {
+  id             String         @id @default(cuid())
+  householdId    String         @map("household_id")
+  memberId       String?        @map("member_id")
+  title          String
+  description    String?
+  dueAt          DateTime       @map("due_at")
+  recurrenceRule String?        @map("recurrence_rule")
+  status         ReminderStatus @default(PENDING)
+  createdAt      DateTime       @default(now()) @map("created_at")
+
+  household Household     @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  member    FamilyMember? @relation(fields: [memberId], references: [id], onDelete: SetNull)
+
+  @@map("reminders")
+}
+
+// ──────────────────────────────────────────────
+// MEMORIA CONVERSACIONAL
+// ──────────────────────────────────────────────
+
+enum MessageRole {
+  USER
+  ASSISTANT
+  SYSTEM
+  TOOL
+}
+
+model ConversationMessage {
+  id          String      @id @default(cuid())
+  householdId String      @map("household_id")
+  role        MessageRole
+  content     String
+  intent      String?
+  metadata    Json?       @db.JsonB
+  createdAt   DateTime    @default(now()) @map("created_at")
+
+  household Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+
+  @@index([householdId, createdAt])
+  @@map("conversation_messages")
 }

@@ -1,6 +1,6 @@
 # 🏗️ Architecture Documentation
 
-This document provides a comprehensive overview of the LangGraph.js AI Agent Template architecture, designed to help developers understand the system's design patterns and extend functionality.
+This document provides a comprehensive overview of the **Family Copilot** application architecture — a LangGraph.js multi-agent system built with Next.js 15.
 
 ## 📋 Table of Contents
 
@@ -9,12 +9,13 @@ This document provides a comprehensive overview of the LangGraph.js AI Agent Tem
 3. [Data Flow](#data-flow)
 4. [Database Schema](#database-schema)
 5. [Agent Workflow](#agent-workflow)
-6. [MCP Integration](#mcp-integration)
-7. [Tool Approval Process](#tool-approval-process)
-8. [File Upload & Storage](#file-upload--storage)
-9. [Streaming Architecture](#streaming-architecture)
-10. [Error Handling](#error-handling)
-11. [Performance Considerations](#performance-considerations)
+6. [Family Copilot Subagents](#family-copilot-subagents)
+7. [MCP Integration](#mcp-integration)
+8. [Tool Approval Process](#tool-approval-process)
+9. [File Upload & Storage](#file-upload--storage)
+10. [Streaming Architecture](#streaming-architecture)
+11. [Error Handling](#error-handling)
+12. [Performance Considerations](#performance-considerations)
 
 ## 🌐 System Overview
 
@@ -45,9 +46,16 @@ This document provides a comprehensive overview of the LangGraph.js AI Agent Tem
 │  │   (REST/SSE)    │  │   (Streaming)   │  │   (Utils)       │ │
 │  └─────────────────┘  └─────────────────┘  └─────────────────┘ │
 ├─────────────────────────────────────────────────────────────────┤
+│            Multi-Agent Supervisor Architecture                  │
+│  ┌────────────┐  ┌─────────────────────────────────────────┐   │
+│  │ Supervisor │  │             Subagents                   │   │
+│  │  (router)  │→ │ calendar · general · family · reminder  │   │
+│  └────────────┘  │ recipe · shopping                       │   │
+│                  └─────────────────────────────────────────┘   │
+├─────────────────────────────────────────────────────────────────┤
 │  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐ │
-│  │  Agent Builder  │  │   MCP Client    │  │   Memory Mgmt   │ │
-│  │  (LangGraph)    │  │   (Tools)       │  │   (History)     │ │
+│  │  Agent Builder  │  │   MCP Client    │  │  Domain Tools   │ │
+│  │  (LangGraph)    │  │  (MCP servers)  │  │ (Prisma-backed) │ │
 │  └─────────────────┘  └─────────────────┘  └─────────────────┘ │
 └─────────────────────────────────────────────────────────────────┘
                                 │
@@ -91,19 +99,52 @@ This document provides a comprehensive overview of the LangGraph.js AI Agent Tem
 
 ## 🧩 Core Components
 
-### 1. Agent Builder (`src/lib/agent/builder.ts`)
+### 1. Supervisor Graph (`src/lib/agent/supervisor.ts`)
 
-The heart of the AI agent system, responsible for creating and configuring LangGraph StateGraphs.
+Orchestrates routing between specialized subagents using a `transfer_to_<agent>` tool-calling pattern.
+
+```typescript
+export async function buildSupervisorGraph(
+  allTools: StructuredToolInterface[],
+  cfg?: AgentConfigOptions,
+  householdId?: string,
+) {
+  // Supervisor LLM bound to transfer tools
+  const supervisorLLM = llm.bindTools(buildTransferTools());
+
+  // Build all subagent compiled graphs
+  const [familyGraph, reminderGraph, recipeGraph, shoppingGraph] = await Promise.all([
+    buildFamilyAgent(householdId, cfg),
+    buildReminderAgent(householdId, cfg),
+    buildRecipeAgent(householdId, cfg),
+    buildShoppingAgent(householdId, cfg),
+  ]);
+  const calendarGraph = buildCalendarAgent(allTools, cfg); // uses MCP tools
+  const generalGraph = buildGeneralAgent(allTools, cfg); // uses MCP tools
+
+  return graph.compile({ checkpointer: postgresCheckpointer });
+}
+```
+
+**Routing logic:** The supervisor LLM calls a `transfer_to_<name>` tool. `routeAfterSupervisor()` extracts the target name from the tool call and returns it as the next node. If no tool is called the graph ends.
+
+**Graph topology:**
+
+```
+START → supervisor ─► calendar  ─┐
+                  ─► general    ─┤
+                  ─► family     ─┼─► supervisor → … → END
+                  ─► reminder   ─┤
+                  ─► recipe     ─┤
+                  ─► shopping   ─┘
+```
+
+### 2. Agent Builder (`src/lib/agent/builder.ts`)
+
+Used by every subagent to create a LangGraph `StateGraph` with the human-in-the-loop approval pattern.
 
 ```typescript
 export class AgentBuilder {
-  private toolNode: ToolNode;
-  private readonly model: BaseChatModel;
-  private tools: DynamicTool[];
-  private systemPrompt: string;
-  private approveAllTools: boolean;
-  private checkpointer?: BaseCheckpointSaver;
-
   build() {
     const stateGraph = new StateGraph(MessagesAnnotation);
     stateGraph
@@ -119,14 +160,7 @@ export class AgentBuilder {
 }
 ```
 
-**Key Responsibilities:**
-
-- StateGraph construction with human-in-the-loop pattern
-- Tool binding and approval workflow
-- Model configuration and prompt management
-- Checkpointer integration for persistence
-
-### 2. MCP Integration (`src/lib/agent/mcp.ts`)
+### 3. MCP Integration (`src/lib/agent/mcp.ts`)
 
 Manages dynamic tool loading from Model Context Protocol servers.
 
@@ -155,7 +189,7 @@ export async function createMCPClient(): Promise<MultiServerMCPClient | null> {
 - Tool name prefixing for conflict prevention
 - Graceful error handling for failed servers
 
-### 3. Streaming Service (`src/services/agentService.ts`)
+### 4. Streaming Service (`src/services/agentService.ts`)
 
 Handles real-time streaming of agent responses via Server-Sent Events.
 
@@ -196,7 +230,7 @@ export async function streamResponse(params: {
 }
 ```
 
-### 4. Chat Hook (`src/hooks/useChatThread.ts`)
+### 5. Chat Hook (`src/hooks/useChatThread.ts`)
 
 React hook providing chat functionality with optimistic UI updates.
 
@@ -284,30 +318,38 @@ UI Update
 ### Entity Relationship Diagram
 
 ```
-┌─────────────────┐         ┌─────────────────┐
-│     Thread      │         │   MCPServer     │
-├─────────────────┤         ├─────────────────┤
-│ id: String (PK) │         │ id: String (PK) │
-│ title: String   │         │ name: String    │
-│ createdAt: Date │         │ type: Enum      │
-│ updatedAt: Date │         │ enabled: Bool   │
-└─────────────────┘         │ command: String?│
-                            │ args: Json?     │
-                            │ env: Json?      │
-                            │ url: String?    │
-                            │ headers: Json?  │
-                            │ createdAt: Date │
-                            │ updatedAt: Date │
-                            └─────────────────┘
+┌──────────────────────┐       ┌─────────────────┐
+│       Thread         │       │   MCPServer     │
+├──────────────────────┤       ├─────────────────┤
+│ id: String (PK)      │       │ id: String (PK) │
+│ title: String        │       │ name: String    │
+│ householdId: String? │──┐    │ type: Enum      │
+│ createdAt: Date      │  │    │ enabled: Bool   │
+│ updatedAt: Date      │  │    │ command: String?│
+└──────────────────────┘  │    │ args: Json?     │
+                          │    │ env: Json?      │
+┌─────────────────────────┘    │ url: String?    │
+│                              │ headers: Json?  │
+▼                              └─────────────────┘
+┌──────────────────────┐
+│      Household       │──┬── FamilyMember[]
+├──────────────────────┤  ├── HouseholdPreferences
+│ id: String (PK)      │  ├── FamilyConstraint[]
+│ name: String         │  ├── Recipe[]
+│ timezone: String     │  ├── PantryItem[]
+│ currency: String     │  ├── ShoppingList[]
+│ inviteCode: String?  │  ├── CalendarEvent[]
+└──────────────────────┘  ├── Reminder[]
+                          ├── ConversationMessage[]
+                          └── Thread[]
 
-                    ┌─────────────────────────┐
-                    │   LangGraph Checkpoints │
-                    │   (managed by framework)│
-                    ├─────────────────────────┤
-                    │ thread_id: String       │
-                    │ checkpoint_id: String   │
-                    │                         │
-                    └─────────────────────────┘
+┌─────────────────────────┐
+│   LangGraph Checkpoints │
+│   (managed by framework)│
+├─────────────────────────┤
+│ thread_id: String       │
+│ checkpoint_id: String   │
+└─────────────────────────┘
 ```
 
 ### Schema Details
@@ -316,93 +358,100 @@ UI Update
 
 ```prisma
 model Thread {
-  id        String   @id @default(uuid())
-  title     String
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id          String     @id @default(uuid())
+  title       String
+  householdId String?
+  household   Household? @relation(fields: [householdId], references: [id])
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
 }
 ```
 
-**Purpose**: Minimal metadata for conversation threads. The actual conversation history is stored in LangGraph checkpoints for efficient state management.
+**Purpose**: Minimal metadata for conversation threads. The optional `householdId` links a thread to a family household so the correct domain tools are loaded. Conversation history lives in LangGraph checkpoints.
 
 #### MCPServer Model
 
 ```prisma
 model MCPServer {
-  id        String            @id @default(uuid())
-  name      String            @unique
-  type      MCPServerType     // stdio | http
-  enabled   Boolean           @default(true)
-  // For stdio servers
+  id        String        @id @default(uuid())
+  name      String        @unique
+  type      MCPServerType // stdio | http
+  enabled   Boolean       @default(true)
   command   String?
   args      Json?
   env       Json?
-  // For http servers
   url       String?
   headers   Json?
-  createdAt DateTime          @default(now())
-  updatedAt DateTime          @updatedAt
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
 }
 ```
 
-**Purpose**: Dynamic configuration of MCP servers. Supports both stdio (command-line) and HTTP-based servers with flexible JSON configuration.
+#### Family Copilot Models
+
+| Model                  | Purpose                                                 |
+| ---------------------- | ------------------------------------------------------- |
+| `Household`            | Root entity: timezone, currency, invite code            |
+| `FamilyMember`         | Members with role, birthdate, school, diet notes        |
+| `HouseholdPreferences` | Supermarket, budget, shopping day, meal style           |
+| `FamilyConstraint`     | Typed constraints (SCHEDULE_RULE, DIET, ALLERGY, etc.)  |
+| `Recipe`               | Saved recipes with full ingredient list                 |
+| `RecipeIngredient`     | Named ingredient with quantity, unit, category          |
+| `PantryItem`           | Household pantry inventory with expiration dates        |
+| `ShoppingList`         | DRAFT/ACTIVE/COMPLETED lists with source type           |
+| `ShoppingListItem`     | Items with quantity, category and purchase flag         |
+| `CalendarEvent`        | DB-backed family events (separate from Google Calendar) |
+| `Reminder`             | PENDING/DONE/DISMISSED reminders with recurrence        |
+| `ConversationMessage`  | Optional persisted conversation log per household       |
 
 ## 🤖 Agent Workflow
 
-### StateGraph Structure
+### Supervisor + Subagent Graph
+
+The application uses a **Patrón B (Supervisor + Subagents)** multi-agent architecture:
 
 ```
-    START
+START
+  │
+  ▼
+┌────────────┐  transfer_to_calendar  ┌──────────────┐
+│ supervisor │ ──────────────────────► │   calendar   │ ─┐
+│  (router)  │  transfer_to_general   │   subagent   │  │
+│            │ ──────────────────────► ├──────────────┤  │
+│            │  transfer_to_family    │   general    │  │
+│            │ ──────────────────────► ├──────────────┤  │
+│            │  transfer_to_reminder  │    family    │  ├──► returns to supervisor
+│            │ ──────────────────────► ├──────────────┤  │
+│            │  transfer_to_recipe    │   reminder   │  │
+│            │ ──────────────────────► ├──────────────┤  │
+│            │  transfer_to_shopping  │    recipe    │  │
+│            │ ──────────────────────► ├──────────────┤  │
+│            │                         │   shopping   │ ─┘
+└────────────┘                         └──────────────┘
       │
-      ▼
-┌──────────┐
-│  agent   │ ──► Call language model with tools
-└──────────┘
+   (no tool call)
       │
-      ▼
-  Should approve
-     tool?
-   ┌─────────┐
-   │   Yes   │ ──► ┌─────────────┐
-   └─────────┘     │tool_approval│ ──► Human review
-                   └─────────────┘
-   ┌─────────┐              │
-   │   No    │              ▼
-   └─────────┘         ┌─────────┐
-      │                │  tools  │ ──► Execute tools
-      ▼                └─────────┘
-    END                     │
-                           ▼
-                      Back to agent
+     END
 ```
 
-### Node Descriptions
+Each **subagent** is itself a compiled `AgentBuilder` graph:
 
-#### Agent Node
+```
+agent → tool_approval → tools → agent → … → END
+```
 
-- **Input**: Current conversation state
-- **Process**:
-  - Add system prompt to message history
-  - Bind available tools to language model
-  - Generate response with potential tool calls
-- **Output**: AI message (text and/or tool calls)
+### Subagent Tool Sets
 
-#### Tool Approval Node
+| Subagent   | Tool source          | Tools                                                                                            |
+| ---------- | -------------------- | ------------------------------------------------------------------------------------------------ |
+| `calendar` | MCP server           | create_event, list_events, update_event, delete_event                                            |
+| `general`  | MCP servers          | all non-calendar MCP tools                                                                       |
+| `family`   | Prisma (householdId) | get_family_context, find_family_member, get_pantry_items, update_pantry                          |
+| `reminder` | Prisma (householdId) | create_reminder, list_reminders, complete_reminder, dismiss_reminder                             |
+| `recipe`   | Prisma (householdId) | save_recipe, search_recipes, get_pantry_items                                                    |
+| `shopping` | Prisma (householdId) | get_active_shopping_list, create_shopping_list, add_items, generate_from_recipes, mark_purchased |
 
-- **Input**: AI message with tool calls
-- **Process**:
-  - Check if `approveAllTools` is enabled
-  - If not, interrupt with tool details for human review
-  - Wait for user decision (allow/deny/modify)
-- **Output**: Command to continue to tools or return to agent
-
-#### Tools Node
-
-- **Input**: Approved tool calls
-- **Process**: Execute tools via MCP clients
-- **Output**: Tool results as messages
-
-### Interrupt Handling
+### Interrupt Handling (inside each subagent)
 
 ```typescript
 const humanReview = interrupt<
@@ -414,20 +463,44 @@ const humanReview = interrupt<
 });
 
 switch (humanReview.action) {
-  case "continue":
+  case "continue": // allow
     return new Command({ goto: "tools" });
-  case "update":
-    return new Command({
-      goto: "tools",
-      update: { messages: [updatedMessage] },
-    });
-  case "feedback":
+  case "deny": // deny
     return new Command({
       goto: "agent",
-      update: { messages: [toolMessage] },
+      update: {
+        messages: [new ToolMessage({ content: "Tool execution was denied by the user." })],
+      },
     });
 }
 ```
+
+## 👨‍👩‍👧‍👦 Family Copilot Subagents
+
+The four Prisma-backed subagents (`family`, `reminder`, `recipe`, `shopping`) receive a `householdId` at construction time, which is resolved from the thread's `householdId` field. If no `householdId` is set on the thread, `resolveHouseholdId()` falls back to the first household in the database.
+
+### householdId resolution chain
+
+```
+Thread.householdId?
+  ├── set  → /api/agent/stream reads prisma.thread.householdId
+  │          → passes to streamResponse opts.householdId
+  │          → ensureAgent cfg.householdId
+  │          → buildSupervisorGraph(householdId)
+  │          → buildXxxAgent(householdId)
+  │          → DynamicStructuredTool closes over ctx = { householdId }
+  └── null → resolveHouseholdId() → prisma.household.findFirst()
+```
+
+### Domain tool files (`src/lib/tools/`)
+
+| File                 | Exports                                                                                                                                        |
+| -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `family/index.ts`    | AgentContext, resolveHouseholdId, getFamilyContextTool, findFamilyMemberTool, getMemberScheduleRulesTool, getPantryItemsTool, updatePantryTool |
+| `reminders/index.ts` | createReminderTool, listRemindersTool, completeReminderTool, dismissReminderTool                                                               |
+| `recipes/index.ts`   | saveRecipeTool, searchRecipesTool                                                                                                              |
+| `shopping/index.ts`  | createShoppingListTool, addItemsToShoppingListTool, generateGroceryListFromRecipesTool, getActiveShoppingListTool, markItemsPurchasedTool      |
+| `calendar/index.ts`  | DB-backed calendar tools (separate from Google Calendar MCP)                                                                                   |
 
 ## 🔧 MCP Integration
 

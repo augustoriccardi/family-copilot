@@ -31,6 +31,7 @@ export interface AgentConfigOptions {
   systemPrompt?: string; // system prompt override
   tools?: unknown[]; // tools from registry or direct tool objects
   approveAllTools?: boolean; // if true, skip tool approval prompts
+  householdId?: string; // active household for family subagents
 }
 
 /**

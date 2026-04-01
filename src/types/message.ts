@@ -19,6 +19,7 @@ export interface MessageOptions {
   allowTool?: "allow" | "deny";
   approveAllTools?: boolean; // if true, skip tool approval prompts
   attachments?: FileAttachment[];
+  householdId?: string; // active household for family subagents
 }
 
 export interface MessageRequest {
