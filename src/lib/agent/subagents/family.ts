@@ -16,6 +16,13 @@ import {
   getMemberScheduleRulesTool,
   getPantryItemsTool,
   updatePantryTool,
+  upsertConstraintTool,
+  deleteConstraintTool,
+  listConstraintsTool,
+  addFamilyMemberTool,
+  updateFamilyMemberTool,
+  updateHouseholdPreferencesTool,
+  deletePantryItemTool,
 } from "../../tools/family/index";
 
 function buildFamilyTools(householdId: string | null) {
@@ -79,6 +86,125 @@ function buildFamilyTools(householdId: string | null) {
       func: async (args) =>
         noHousehold ? NO_HOUSEHOLD : JSON.stringify(await updatePantryTool(args, ctx)),
     }),
+
+    new DynamicStructuredTool({
+      name: "delete_pantry_item",
+      description: "Elimina un producto de la despensa por nombre.",
+      schema: z.object({
+        itemName: z.string().describe("Nombre del producto a eliminar"),
+      }),
+      func: async (args) =>
+        noHousehold ? NO_HOUSEHOLD : JSON.stringify(await deletePantryItemTool(args, ctx)),
+    }),
+
+    new DynamicStructuredTool({
+      name: "list_constraints",
+      description:
+        "Lista las restricciones de un integrante o de toda la familia: alergias, dietas, medicamentos, reglas de horario, etc.",
+      schema: z.object({
+        memberId: z.string().optional().describe("ID del integrante. Omitir = toda la familia"),
+      }),
+      func: async (args) =>
+        noHousehold ? NO_HOUSEHOLD : JSON.stringify(await listConstraintsTool(args, ctx)),
+    }),
+
+    new DynamicStructuredTool({
+      name: "upsert_constraint",
+      description:
+        "Guarda o actualiza una restricción de un integrante (alergia, intolerancia, medicamento, dieta, regla de horario, etc.). Usá esta tool cuando alguien mencione que es alérgico, intolerante, toma un medicamento, sigue una dieta especial o tiene una regla de horario fija.",
+      schema: z.object({
+        memberId: z
+          .string()
+          .nullish()
+          .describe("ID del integrante afectado. null = restricción del hogar entero"),
+        type: z
+          .enum(["ALLERGY", "DISLIKE", "MEDICATION", "SCHEDULE_RULE", "DIET", "OTHER"])
+          .describe(
+            "Tipo: ALLERGY=alergia, DISLIKE=no le gusta, MEDICATION=medicamento, SCHEDULE_RULE=regla de horario, DIET=dieta, OTHER=otro",
+          ),
+        key: z
+          .string()
+          .describe(
+            "Identificador corto de la restricción, ej: 'mani', 'lactosa', 'aspirina', 'no_lunes_noche'",
+          ),
+        value: z
+          .string()
+          .describe(
+            "Descripción completa, ej: 'Alérgico al maní — riesgo anafilaxis', 'Toma 10mg de Ritalin por la mañana'",
+          ),
+      }),
+      func: async (args) =>
+        noHousehold
+          ? NO_HOUSEHOLD
+          : JSON.stringify(
+              await upsertConstraintTool({ ...args, memberId: args.memberId ?? undefined }, ctx),
+            ),
+    }),
+
+    new DynamicStructuredTool({
+      name: "delete_constraint",
+      description:
+        "Elimina una restricción existente (cuando ya no aplica). Usá list_constraints primero para obtener el ID.",
+      schema: z.object({
+        constraintId: z.string().describe("ID de la restricción a eliminar"),
+      }),
+      func: async (args) =>
+        noHousehold ? NO_HOUSEHOLD : JSON.stringify(await deleteConstraintTool(args, ctx)),
+    }),
+
+    new DynamicStructuredTool({
+      name: "add_family_member",
+      description: "Agrega un nuevo integrante al hogar familiar.",
+      schema: z.object({
+        name: z.string().describe("Nombre completo"),
+        role: z
+          .enum(["MADRE", "PADRE", "HIJO", "HIJA", "ABUELO", "ABUELA", "OTRO"])
+          .describe("Rol en la familia"),
+        nickname: z.string().optional(),
+        birthdate: z.string().optional().describe("Fecha de nacimiento en formato ISO 8601"),
+        schoolName: z.string().optional().describe("Nombre del colegio/escuela si aplica"),
+        isMinor: z.boolean().optional().describe("true si es menor de edad"),
+        notes: z.string().optional(),
+        color: z.string().optional().describe("Color identificador en hex, ej: '#FF6B6B'"),
+      }),
+      func: async (args) =>
+        noHousehold ? NO_HOUSEHOLD : JSON.stringify(await addFamilyMemberTool(args, ctx)),
+    }),
+
+    new DynamicStructuredTool({
+      name: "update_family_member",
+      description: "Actualiza datos de un integrante existente (apodo, notas, colegio, etc.).",
+      schema: z.object({
+        memberId: z.string().describe("ID del integrante a actualizar"),
+        name: z.string().optional(),
+        nickname: z.string().optional(),
+        birthdate: z.string().optional().describe("ISO 8601"),
+        schoolName: z.string().optional(),
+        notes: z.string().optional(),
+        color: z.string().optional().describe("Color hex, ej: '#FF6B6B'"),
+      }),
+      func: async (args) =>
+        noHousehold ? NO_HOUSEHOLD : JSON.stringify(await updateFamilyMemberTool(args, ctx)),
+    }),
+
+    new DynamicStructuredTool({
+      name: "update_household_preferences",
+      description:
+        "Actualiza las preferencias del hogar: supermercado preferido, presupuesto semanal, día de compras, estilo de comida.",
+      schema: z.object({
+        preferredSupermarket: z.string().optional(),
+        weeklyBudget: z.number().optional().describe("Presupuesto semanal en la moneda del hogar"),
+        shoppingDay: z.string().optional().describe("Día de la semana para hacer las compras"),
+        mealStyle: z
+          .string()
+          .optional()
+          .describe("Estilo de comida preferido, ej: 'mediterráneo', 'vegano'"),
+      }),
+      func: async (args) =>
+        noHousehold
+          ? NO_HOUSEHOLD
+          : JSON.stringify(await updateHouseholdPreferencesTool(args, ctx)),
+    }),
   ];
 }
 
@@ -98,6 +224,6 @@ export async function buildFamilyAgent(householdId?: string, cfg?: AgentConfigOp
     tools: buildFamilyTools(resolvedId),
     prompt: FAMILY_AGENT_PROMPT(),
     checkpointer: postgresCheckpointer,
-    approveAllTools: cfg?.approveAllTools ?? false,
+    approveAllTools: true, // Subagents always auto-approve — interrupt flow breaks in nested graphs
   }).build();
 }

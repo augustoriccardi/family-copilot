@@ -1,11 +1,22 @@
 import type { MessageResponse, ToolApprovalCallbacks } from "@/types/message";
 import { Bot } from "lucide-react";
+import Image from "next/image";
 import rehypeKatex from "rehype-katex";
 import { cn } from "@/lib/utils";
 import { getMessageContent, hasToolCalls, getToolCalls } from "@/services/messageUtils";
 import { ToolCallDisplay } from "./ToolCallDisplay";
 import { useUISettings } from "@/contexts/UISettingsContext";
 import MDEditor from "@uiw/react-md-editor";
+
+const AGENT_AVATARS: Record<string, string> = {
+  supervisor: "/avatars/supervisor.png",
+  calendar: "/avatars/calendar.png",
+  general: "/avatars/general.png",
+  family: "/avatars/family.png",
+  reminder: "/avatars/reminder.png",
+  recipe: "/avatars/recipe.png",
+  shopping: "/avatars/shopping.png",
+};
 
 interface AIMessageProps {
   message: MessageResponse;
@@ -31,10 +42,24 @@ export const AIMessage = ({
     return null;
   }
 
+  const avatarSrc = message.agentName ? AGENT_AVATARS[message.agentName] : undefined;
+
   return (
     <div className="flex gap-3">
-      <div className="bg-primary/10 flex h-8 w-8 shrink-0 items-center justify-center rounded-full">
-        <Bot className="text-primary h-5 w-5" />
+      <div className="bg-primary/10 relative h-10 w-10 shrink-0 self-start overflow-hidden rounded-full">
+        {avatarSrc ? (
+          <Image
+            src={avatarSrc}
+            alt={message.agentName ?? "agent"}
+            fill
+            sizes="40px"
+            className="object-cover"
+          />
+        ) : (
+          <div className="flex h-full w-full items-center justify-center">
+            <Bot className="text-primary h-5 w-5" />
+          </div>
+        )}
       </div>
       <div className="max-w-[80%] space-y-3">
         {messageContent && (

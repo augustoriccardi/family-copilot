@@ -108,6 +108,6 @@ export async function buildShoppingAgent(householdId?: string, cfg?: AgentConfig
     tools: buildShoppingTools(resolvedId),
     prompt: SHOPPING_AGENT_PROMPT(),
     checkpointer: postgresCheckpointer,
-    approveAllTools: cfg?.approveAllTools ?? false,
+    approveAllTools: true, // Subagents always auto-approve — interrupt flow breaks in nested graphs
   }).build();
 }

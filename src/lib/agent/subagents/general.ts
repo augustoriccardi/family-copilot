@@ -38,6 +38,6 @@ export function buildGeneralAgent(allTools: StructuredToolInterface[], cfg?: Age
     tools: generalTools,
     prompt: GENERAL_AGENT_PROMPT(),
     checkpointer: postgresCheckpointer,
-    approveAllTools: cfg?.approveAllTools ?? false,
+    approveAllTools: true, // Subagents always auto-approve — interrupt flow breaks in nested graphs
   }).build();
 }

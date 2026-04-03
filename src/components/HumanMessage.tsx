@@ -5,9 +5,37 @@ import type {
   ImageUrlContentItem,
   TextContentItem,
 } from "@/types/message";
-import { UserIcon, FileText, Image as ImageIcon } from "lucide-react";
+import { FileText, Image as ImageIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { getMessageContent } from "@/services/messageUtils";
+import { useUISettings } from "@/contexts/UISettingsContext";
+
+function getInitials(name: string): string {
+  return name
+    .split(" ")
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((w) => w[0].toUpperCase())
+    .join("");
+}
+
+// Deterministic color from name so each member always gets the same color
+const AVATAR_COLORS = [
+  "bg-blue-400",
+  "bg-emerald-400",
+  "bg-violet-400",
+  "bg-rose-400",
+  "bg-amber-400",
+  "bg-cyan-400",
+  "bg-pink-400",
+  "bg-teal-400",
+];
+
+function avatarColor(name: string): string {
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) hash = name.charCodeAt(i) + ((hash << 5) - hash);
+  return AVATAR_COLORS[Math.abs(hash) % AVATAR_COLORS.length];
+}
 
 interface HumanMessageProps {
   message: MessageResponse;
@@ -17,6 +45,11 @@ type ContentItem = ImageUrlContentItem | TextContentItem | { type: string };
 
 export const HumanMessage = ({ message }: HumanMessageProps) => {
   const data = message.data as BasicMessageData;
+  const { caller } = useUISettings();
+  const displayName = caller?.callerName ?? "Tú";
+  const initials = getInitials(displayName);
+  // Use the member's configured color if available, otherwise fall back to deterministic hash color
+  const bgColor = caller?.callerColor ?? avatarColor(displayName);
   const attachments = [...(data.attachments || [])];
 
   // Extract attachments from content array (for messages loaded from checkpoint)
@@ -46,7 +79,7 @@ export const HumanMessage = ({ message }: HumanMessageProps) => {
           className={cn(
             "rounded-2xl px-4 py-2",
             "bg-gray-300/50 text-gray-800",
-            "backdrop-blur-sm supports-[backdrop-filter]:bg-gray-300/50",
+            "backdrop-blur-sm supports-backdrop-filter:bg-gray-300/50",
           )}
         >
           {/* File Attachments */}
@@ -89,8 +122,16 @@ export const HumanMessage = ({ message }: HumanMessageProps) => {
           </div>
         </div>
       </div>
-      <div className="bg-primary/10 flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full">
-        <UserIcon className="text-primary h-5 w-5" />
+      <div
+        className={cn(
+          "flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-white",
+          // If color is a hex value, use inline style; if it's a Tailwind class, use className
+          !bgColor?.startsWith("#") && bgColor,
+        )}
+        style={bgColor?.startsWith("#") ? { backgroundColor: bgColor } : undefined}
+        title={displayName}
+      >
+        <span className="text-sm font-semibold">{initials}</span>
       </div>
     </div>
   );

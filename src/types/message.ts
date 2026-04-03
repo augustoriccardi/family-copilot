@@ -20,6 +20,9 @@ export interface MessageOptions {
   approveAllTools?: boolean; // if true, skip tool approval prompts
   attachments?: FileAttachment[];
   householdId?: string; // active household for family subagents
+  callerId?: string; // FamilyMember.id of the person sending the message
+  callerName?: string; // FamilyMember.name for injecting into the system prompt
+  callerRole?: string; // FamilyMember.role (PADRE, MADRE, etc.)
 }
 
 export interface MessageRequest {
@@ -91,7 +94,7 @@ export interface ToolApprovalCallbacks {
 
 export interface MessageResponse {
   type: "human" | "ai" | "tool" | "error";
-
+  agentName?: string;
   data: BasicMessageData | AIMessageData | ToolMessageData;
 }
 

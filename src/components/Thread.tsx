@@ -6,6 +6,8 @@ import { Loader2 } from "lucide-react";
 import { ScrollArea } from "./ui/scroll-area";
 import { useEffect, useRef, useState } from "react";
 import { MessageOptions } from "@/types/message";
+import { useThreadContext } from "@/contexts/ThreadContext";
+import { useUISettings } from "@/contexts/UISettingsContext";
 
 interface ThreadProps {
   threadId: string;
@@ -17,6 +19,14 @@ export const Thread = ({ threadId, onFirstMessageSent }: ThreadProps) => {
     useChatThread({ threadId });
   const firstMessageInitiatedRef = useRef(false);
   const [awaitingFirstResponse, setAwaitingFirstResponse] = useState(false);
+  const { setActiveThreadId } = useThreadContext();
+  const { approveAllTools } = useUISettings();
+
+  // Keep ThreadContext in sync so SettingsPanel (and other components) can access the active thread
+  useEffect(() => {
+    setActiveThreadId(threadId);
+    return () => setActiveThreadId(null);
+  }, [threadId, setActiveThreadId]);
 
   const handleSendMessage = async (message: string, opts?: MessageOptions) => {
     const wasEmpty = messages.length === 0;
@@ -54,14 +64,23 @@ export const Thread = ({ threadId, onFirstMessageSent }: ThreadProps) => {
           <div className="min-h-0 flex-1">
             <ScrollArea className="h-full">
               <div className="space-y-4 px-4 py-4">
-                <MessageList messages={messages} approveToolExecution={approveToolExecution} />
+                <MessageList
+                  messages={messages}
+                  approveToolExecution={(id, action) =>
+                    approveToolExecution(id, action, { approveAllTools })
+                  }
+                />
               </div>
             </ScrollArea>
           </div>
           <div className="shrink-0">
             <div className="w-full p-4 pb-6">
               <div className="mx-auto max-w-3xl">
-                <MessageInput onSendMessage={handleSendMessage} isLoading={isSending} />
+                <MessageInput
+                  onSendMessage={handleSendMessage}
+                  isLoading={isSending}
+                  threadId={threadId}
+                />
               </div>
             </div>
           </div>
@@ -77,7 +96,11 @@ export const Thread = ({ threadId, onFirstMessageSent }: ThreadProps) => {
                 Start a new conversation by sending a message
               </p>
             </div>
-            <MessageInput onSendMessage={handleSendMessage} isLoading={isSending} />
+            <MessageInput
+              onSendMessage={handleSendMessage}
+              isLoading={isSending}
+              threadId={threadId}
+            />
           </div>
         </div>
       )}

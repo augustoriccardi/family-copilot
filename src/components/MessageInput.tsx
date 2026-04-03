@@ -10,24 +10,26 @@ interface MessageInputProps {
   onSendMessage: (message: string, opts?: MessageOptions) => Promise<void>;
   isLoading?: boolean;
   maxLength?: number;
+  threadId?: string;
 }
 
 export const MessageInput = ({
   onSendMessage,
   isLoading = false,
   maxLength = 2000,
+  threadId,
 }: MessageInputProps) => {
   const [message, setMessage] = useState("");
   const [isFocused, setIsFocused] = useState(false);
   const [provider, setProvider] = useState<string>("openai");
-  const [model, setModel] = useState<string>("gpt-4o");
-  const [approveAllTools, setApproveAllTools] = useState<boolean>(false);
+  const [model, setModel] = useState<string>("gpt-4o-mini");
   const [settingsExpanded, setSettingsExpanded] = useState<boolean>(false);
   const [attachments, setAttachments] = useState<FileAttachment[]>([]);
   const [isUploading, setIsUploading] = useState(false);
 
   // UI settings for toggling tool messages
-  const { hideToolMessages, toggleToolMessages } = useUISettings();
+  const { hideToolMessages, toggleToolMessages, caller, approveAllTools, setApproveAllTools } =
+    useUISettings();
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -112,6 +114,9 @@ export const MessageInput = ({
       tools: [],
       approveAllTools: approveAllTools,
       attachments: attachments.length > 0 ? attachments : undefined,
+      callerId: caller?.callerId,
+      callerName: caller?.callerName,
+      callerRole: caller?.callerRole,
     });
     setMessage("");
     setAttachments([]);
@@ -134,137 +139,134 @@ export const MessageInput = ({
           setProvider={setProvider}
           model={model}
           setModel={setModel}
+          threadId={threadId}
+        />
+        {/* Attachment previews */}
+        {attachments.length > 0 && (
+          <div className="flex flex-wrap gap-2 px-3 pt-2">
+            {attachments.map((attachment) => (
+              <div
+                key={attachment.key}
+                className="flex items-center gap-2 rounded-md bg-gray-100 px-3 py-1.5 text-sm dark:bg-gray-800"
+              >
+                <span className="max-w-[200px] truncate">{attachment.name}</span>
+                <span className="text-xs text-gray-500">
+                  ({attachment.size < 1024 ? "<1KB" : `${(attachment.size / 1024).toFixed(0)}KB`})
+                </span>
+                <button
+                  type="button"
+                  onClick={() => removeAttachment(attachment.key)}
+                  className="ml-1 text-gray-500 hover:text-gray-700 dark:hover:text-gray-300"
+                  aria-label="Remove attachment"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <textarea
+          value={message}
+          ref={textareaRef}
+          onChange={(e) => setMessage(e.target.value)}
+          onFocus={() => setIsFocused(true)}
+          onBlur={() => setIsFocused(false)}
+          placeholder={"Type your message..."}
+          className="max-h-[200px] min-h-[60px] w-full flex-1 resize-none overflow-auto p-4 pr-12 focus:outline-none"
+          rows={1}
+          aria-label="Message input"
+          disabled={isLoading}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !e.shiftKey) {
+              e.preventDefault();
+              handleSubmit(e);
+            }
+          }}
         />
 
-        {/* Input Section */}
-        <div className="px-4 pt-4 pb-2">
-          {/* File Attachments Display */}
-          {attachments.length > 0 && (
-            <div className="mb-2 flex flex-wrap gap-2">
-              {attachments.map((attachment) => (
-                <div
-                  key={attachment.key}
-                  className="flex items-center gap-2 rounded-md bg-gray-100 px-3 py-1.5 text-sm dark:bg-gray-800"
-                >
-                  <span className="max-w-[200px] truncate">{attachment.name}</span>
-                  <span className="text-xs text-gray-500">
-                    ({attachment.size < 1024 ? "<1KB" : `${(attachment.size / 1024).toFixed(0)}KB`})
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => removeAttachment(attachment.key)}
-                    className="ml-1 text-gray-500 hover:text-gray-700 dark:hover:text-gray-300"
-                    aria-label="Remove attachment"
-                  >
-                    <X className="h-3.5 w-3.5" />
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
+        {/* Hidden file input */}
+        <input
+          ref={fileInputRef}
+          type="file"
+          multiple
+          accept="image/png,image/jpeg,application/pdf,text/markdown,text/plain,.md,.markdown,.txt"
+          onChange={handleFileSelect}
+          className="hidden"
+          aria-label="File upload"
+        />
 
-          <textarea
-            value={message}
-            ref={textareaRef}
-            onChange={(e) => setMessage(e.target.value)}
-            onFocus={() => setIsFocused(true)}
-            onBlur={() => setIsFocused(false)}
-            placeholder={"Type your message..."}
-            className="max-h-[200px] min-h-[60px] w-full flex-1 resize-none overflow-auto pr-12 focus:outline-none"
-            rows={1}
-            aria-label="Message input"
-            disabled={isLoading}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                handleSubmit(e);
-              }
-            }}
-          />
-
-          {/* Hidden file input */}
-          <input
-            ref={fileInputRef}
-            type="file"
-            multiple
-            accept="image/png,image/jpeg,application/pdf,text/markdown,text/plain,.md,.markdown,.txt"
-            onChange={handleFileSelect}
-            className="hidden"
-            aria-label="File upload"
-          />
-
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-4">
-              {/* Character counter */}
-              <div className={`text-xs ${isNearLimit ? "text-amber-500" : "text-gray-400"}`}>
-                {remainingChars}/{maxLength}
-              </div>
-
-              {/* Auto-approve tools setting - always visible */}
-              <label className="flex cursor-pointer items-center gap-1.5">
-                <input
-                  type="checkbox"
-                  checked={approveAllTools}
-                  onChange={(e) => setApproveAllTools(e.target.checked)}
-                  className="h-3.5 w-3.5 cursor-pointer rounded border-gray-300 text-blue-600 focus:ring-1 focus:ring-blue-500"
-                />
-                <span className="text-xs text-gray-600 dark:text-gray-300">Auto-approve tools</span>
-              </label>
-
-              {/* Tool messages toggle */}
-              <button
-                type="button"
-                onClick={toggleToolMessages}
-                className="inline-flex cursor-pointer items-center gap-1 rounded px-2 py-1 text-xs transition-colors hover:bg-gray-200 dark:hover:bg-gray-700"
-                aria-label={hideToolMessages ? "Show tool messages" : "Hide tool messages"}
-              >
-                {hideToolMessages ? (
-                  <EyeOff className="h-3.5 w-3.5 text-gray-500" />
-                ) : (
-                  <Eye className="h-3.5 w-3.5 text-gray-500" />
-                )}
-                <span className="text-gray-600 dark:text-gray-300">
-                  {hideToolMessages ? "Show tools" : "Hide tools"}
-                </span>
-              </button>
+        <div className="flex items-center justify-between p-4">
+          <div className="flex items-center gap-4">
+            {/* Character counter */}
+            <div className={`text-xs ${isNearLimit ? "text-amber-500" : "text-gray-400"}`}>
+              {remainingChars}/{maxLength}
             </div>
 
-            <div className="flex items-center gap-2">
-              {/* File upload button */}
-              <Button
-                type="button"
-                size="sm"
-                variant="ghost"
-                onClick={() => fileInputRef.current?.click()}
-                disabled={isLoading || isUploading || attachments.length >= MAX_ATTACHMENTS}
-                className="h-8 w-8 rounded-full p-0"
-                aria-label="Attach file"
-              >
-                {isUploading ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <Paperclip className="h-4 w-4" />
-                )}
-              </Button>
+            {/* Auto-approve tools setting - always visible */}
+            <label className="flex cursor-pointer items-center gap-1.5">
+              <input
+                type="checkbox"
+                checked={approveAllTools}
+                onChange={(e) => setApproveAllTools(e.target.checked)}
+                className="h-3.5 w-3.5 cursor-pointer rounded border-gray-300 text-blue-600 focus:ring-1 focus:ring-blue-500"
+              />
+              <span className="text-xs text-gray-600 dark:text-gray-300">Auto-approve tools</span>
+            </label>
 
-              <Button
-                type="submit"
-                size="sm"
-                disabled={(!message.trim() && attachments.length === 0) || isLoading}
-                className={`flex h-8 w-8 cursor-pointer items-center justify-center rounded-full p-0 ${
-                  (message.trim() || attachments.length > 0) && !isLoading
-                    ? "bg-primary hover:bg-primary/90 text-white"
-                    : ""
-                }`}
-                aria-label="Send message"
-              >
-                {isLoading ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <ArrowUp className="h-4 w-4" />
-                )}
-              </Button>
-            </div>
+            {/* Tool messages toggle */}
+            <button
+              type="button"
+              onClick={toggleToolMessages}
+              className="inline-flex cursor-pointer items-center gap-1 rounded px-2 py-1 text-xs transition-colors hover:bg-gray-200 dark:hover:bg-gray-700"
+              aria-label={hideToolMessages ? "Show tool messages" : "Hide tool messages"}
+            >
+              {hideToolMessages ? (
+                <EyeOff className="h-3.5 w-3.5 text-gray-500" />
+              ) : (
+                <Eye className="h-3.5 w-3.5 text-gray-500" />
+              )}
+              <span className="text-gray-600 dark:text-gray-300">
+                {hideToolMessages ? "Show tools" : "Hide tools"}
+              </span>
+            </button>
+          </div>
+
+          <div className="flex items-center gap-2">
+            {/* File upload button */}
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={isLoading || isUploading || attachments.length >= MAX_ATTACHMENTS}
+              className="h-8 w-8 rounded-full p-0"
+              aria-label="Attach file"
+            >
+              {isUploading ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Paperclip className="h-4 w-4" />
+              )}
+            </Button>
+
+            <Button
+              type="submit"
+              size="sm"
+              disabled={(!message.trim() && attachments.length === 0) || isLoading}
+              className={`flex h-8 w-8 cursor-pointer items-center justify-center rounded-full p-0 ${
+                (message.trim() || attachments.length > 0) && !isLoading
+                  ? "bg-primary hover:bg-primary/90 text-white"
+                  : ""
+              }`}
+              aria-label="Send message"
+            >
+              {isLoading ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <ArrowUp className="h-4 w-4" />
+              )}
+            </Button>
           </div>
         </div>
       </div>

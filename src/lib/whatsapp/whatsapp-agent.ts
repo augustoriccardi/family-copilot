@@ -43,7 +43,7 @@ export async function handleWhatsAppMessage(
     identity = await provisionNewHousehold(fromPhone);
   }
 
-  const { householdId, threadId, isNewHousehold } = identity;
+  const { householdId, threadId, isNewHousehold, callerId, callerRole } = identity;
 
   // 2. Ensure the thread exists and is linked to the household
   await prisma.thread.upsert({
@@ -69,6 +69,9 @@ export async function handleWhatsAppMessage(
     userText,
     opts: {
       householdId,
+      callerId,
+      callerName: identity.displayName,
+      callerRole,
       // Tools run automatically — no human-in-the-loop approval in WhatsApp channel
       approveAllTools: true,
     },

@@ -18,7 +18,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en">
       <head>
-        <title>LangGraph & NextJS Agent</title>
+        <title>Family Copilot</title>
       </head>
       <body>
         <QueryClientProvider client={queryClient}>

@@ -7,6 +7,14 @@
  * 3. Returns null if no household exists → caller should trigger onboarding
  *
  * Thread ID convention: "wa-<e164phone>" — one persistent thread per phone number.
+ *
+ * ─── WHEN AUTH IS ADDED ──────────────────────────────────────────────────────
+ * This function already resolves callerId/callerName/callerRole from the phone
+ * number via FamilyMember.whatsappPhone. When User auth is implemented:
+ *   - Add lookup: FamilyMember.linkedUserId → User to verify identity
+ *   - Or: verify the phone against User.phone (WhatsApp Business verified number)
+ * The WhatsAppIdentity shape does NOT need to change.
+ * ─────────────────────────────────────────────────────────────────────────────
  */
 
 import prisma from "@/lib/database/prisma";
@@ -16,6 +24,10 @@ export interface WhatsAppIdentity {
   threadId: string;
   /** Display name to greet the user — member name or household name */
   displayName: string;
+  /** FamilyMember.id of the sender, if resolved */
+  callerId?: string;
+  /** FamilyMember.role of the sender (e.g. PADRE, MADRE, HIJO) */
+  callerRole?: string;
   /** True when this is the very first contact (household just created) */
   isNewHousehold?: boolean;
 }
@@ -44,6 +56,7 @@ export async function resolveWhatsAppIdentity(rawPhone: string): Promise<WhatsAp
     select: {
       id: true,
       name: true,
+      role: true,
       householdId: true,
       household: { select: { id: true, name: true } },
     },
@@ -54,6 +67,8 @@ export async function resolveWhatsAppIdentity(rawPhone: string): Promise<WhatsAp
       householdId: member.householdId,
       threadId,
       displayName: member.name,
+      callerId: member.id,
+      callerRole: member.role,
     };
   }
 

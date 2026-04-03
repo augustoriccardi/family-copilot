@@ -15,7 +15,11 @@ export interface UseChatThreadReturn {
   sendError: Error | null;
   sendMessage: (text: string, opts?: MessageOptions) => Promise<void>;
   refetchMessages: () => Promise<unknown>;
-  approveToolExecution: (toolCallId: string, action: "allow" | "deny") => Promise<void>;
+  approveToolExecution: (
+    toolCallId: string,
+    action: "allow" | "deny",
+    opts?: { approveAllTools?: boolean },
+  ) => Promise<void>;
 }
 
 export function useChatThread({ threadId }: UseChatThreadOptions): UseChatThreadReturn {
@@ -33,7 +37,11 @@ export function useChatThread({ threadId }: UseChatThreadOptions): UseChatThread
   } = useQuery<MessageResponse[]>({
     queryKey: ["messages", threadId],
     enabled: !!threadId,
-    queryFn: () => (threadId ? fetchMessageHistory(threadId) : Promise.resolve([])),
+    queryFn: async () => {
+      if (!threadId) return [];
+      // agentName is now included server-side from the message_metadata DB table.
+      return fetchMessageHistory(threadId);
+    },
   });
 
   // Ensure we fetch once the threadId becomes available (guards initial undefined cases)
@@ -188,14 +196,15 @@ export function useChatThread({ threadId }: UseChatThreadOptions): UseChatThread
   );
 
   const approveToolExecution = useCallback(
-    async (toolCallId: string, action: "allow" | "deny") => {
+    async (toolCallId: string, action: "allow" | "deny", opts?: { approveAllTools?: boolean }) => {
       if (!threadId) return;
 
-      // Handle the streaming response with allowTool parameter, empty content since we're resuming
+      // Handle the streaming response with allowTool parameter, empty content since we're resuming.
+      // approveAllTools is passed so if the user toggled it mid-flow the resumed agent picks it up.
       await handleStreamResponse({
         threadId,
         text: "",
-        opts: { allowTool: action },
+        opts: { allowTool: action, approveAllTools: opts?.approveAllTools },
       });
     },
     [threadId, handleStreamResponse],

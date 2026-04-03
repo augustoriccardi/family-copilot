@@ -9,7 +9,7 @@ import {
   DEFAULT_MODEL_NAME,
   DEFAULT_MODEL_PROVIDER,
 } from "./util";
-import { SUPERVISOR_PROMPT } from "./prompts/supervisor";
+import { SUPERVISOR_PROMPT, CallerInfo } from "./prompts/supervisor";
 import { buildCalendarAgent } from "./subagents/calendar";
 import { buildGeneralAgent } from "./subagents/general";
 import { buildFamilyAgent } from "./subagents/family";
@@ -57,6 +57,12 @@ export async function buildSupervisorGraph(
   const modelName = cfg?.model || DEFAULT_MODEL_NAME;
   const llm = createChatModel({ provider, model: modelName, temperature: 1 });
 
+  const caller: CallerInfo = {
+    callerId: cfg?.callerId,
+    callerName: cfg?.callerName,
+    callerRole: cfg?.callerRole,
+  };
+
   const transferTools = buildTransferTools();
   if (!llm.bindTools) {
     throw new Error(
@@ -96,25 +102,32 @@ export async function buildSupervisorGraph(
       }
     }
 
-    const messages = [new SystemMessage(SUPERVISOR_PROMPT()), ...stateMessages];
+    const messages = [new SystemMessage(SUPERVISOR_PROMPT(caller)), ...stateMessages];
     const response = await supervisorLLM.invoke(messages);
 
-    // When the supervisor makes a transfer_to_<agent> tool call, we must immediately
-    // inject the corresponding ToolMessage so the LLM history stays valid.
+    // When the supervisor makes transfer_to_<agent> tool calls, we must immediately
+    // inject a ToolMessage for EVERY tool_call_id so the LLM history stays valid.
     // OpenAI/Gemini require every AIMessage(tool_calls) to be followed by a
     // ToolMessage for each tool_call_id — with nothing else in between.
+    // The LLM may return multiple transfer calls (one per requested operation);
+    // we ack all of them but only route to the first subagent below.
     if (
       "tool_calls" in response &&
       Array.isArray(response.tool_calls) &&
       response.tool_calls.length > 0
     ) {
-      const tc = response.tool_calls[0];
-      if (tc.name?.startsWith("transfer_to_") && tc.id) {
-        const ack = new ToolMessage({
-          content: `Delegated to ${tc.name.replace("transfer_to_", "")} agent.`,
-          tool_call_id: tc.id,
-        });
-        return { messages: [response, ack] };
+      const transferCalls = response.tool_calls.filter((tc) => tc.name?.startsWith("transfer_to_"));
+      if (transferCalls.length > 0 && transferCalls[0].id) {
+        const acks = transferCalls
+          .filter((tc) => tc.id)
+          .map(
+            (tc) =>
+              new ToolMessage({
+                content: `Delegated to ${tc.name.replace("transfer_to_", "")} agent.`,
+                tool_call_id: tc.id!,
+              }),
+          );
+        return { messages: [response, ...acks] };
       }
     }
 
@@ -126,38 +139,99 @@ export async function buildSupervisorGraph(
     const messages = state.messages;
     const lastMsg = messages[messages.length - 1];
 
-    // Route to a subagent ONLY when the last message is the delegation ack ToolMessage
+    // Route to a subagent ONLY when the last message is a delegation ack ToolMessage
     // we injected in supervisorNode. This prevents re-routing after a subagent already replied.
     if (
       lastMsg?._getType() === "tool" &&
       typeof lastMsg.content === "string" &&
       lastMsg.content.startsWith("Delegated to ")
     ) {
-      const prevMsg = messages[messages.length - 2];
-      if (
-        prevMsg instanceof AIMessage &&
-        Array.isArray(prevMsg.tool_calls) &&
-        prevMsg.tool_calls.length > 0
+      // Walk back past all consecutive ack ToolMessages to find the AIMessage with tool_calls.
+      // The supervisor may emit multiple acks (one per transfer call) so we can't assume
+      // the AIMessage is always at messages.length - 2.
+      let idx = messages.length - 2;
+      while (
+        idx >= 0 &&
+        messages[idx]._getType() === "tool" &&
+        typeof messages[idx].content === "string" &&
+        (messages[idx].content as string).startsWith("Delegated to ")
       ) {
-        const subagentName = prevMsg.tool_calls[0].name.replace("transfer_to_", "") as SubagentName;
+        idx--;
+      }
+      const aiMsg = messages[idx];
+      if (
+        aiMsg instanceof AIMessage &&
+        Array.isArray(aiMsg.tool_calls) &&
+        aiMsg.tool_calls.length > 0
+      ) {
+        const subagentName = aiMsg.tool_calls[0].name.replace("transfer_to_", "") as SubagentName;
         if ((SUBAGENT_NAMES as readonly string[]).includes(subagentName)) {
           return subagentName;
         }
       }
     }
 
-    // Any other case (subagent just replied, supervisor answered directly, skip) → END
+    // Check if there are pending transfers that haven't been processed yet.
+    // This handles the case where the supervisor emitted multiple transfer_to_* calls (one per task)
+    // and only the first was routed. After each subagent responds we route to the next pending one.
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const m = messages[i];
+      if (
+        m instanceof AIMessage &&
+        Array.isArray(m.tool_calls) &&
+        m.tool_calls.some((tc) => tc.name?.startsWith("transfer_to_"))
+      ) {
+        const transfers = m.tool_calls.filter((tc) => tc.name?.startsWith("transfer_to_"));
+        const messagesAfterBatch = messages.slice(i + 1);
+        const ackCount = messagesAfterBatch.filter(
+          (msg) =>
+            msg._getType() === "tool" &&
+            typeof msg.content === "string" &&
+            (msg.content as string).startsWith("Delegated to "),
+        ).length;
+        // Count only FINAL subagent responses: AI messages without tool_calls.
+        // Internal subagent steps (AI messages that trigger tool calls) must be excluded
+        // because each subagent adds multiple AI messages to the parent state:
+        // e.g. reminder produces AI(tool_calls=[create_reminder]) + AI(final_answer) = 2 AI msgs.
+        // Counting all AI msgs would make subagentResponseCount > ackCount prematurely.
+        const subagentResponseCount = messagesAfterBatch.filter(
+          (msg) =>
+            msg._getType() === "ai" &&
+            !(
+              msg instanceof AIMessage &&
+              Array.isArray(msg.tool_calls) &&
+              msg.tool_calls.length > 0
+            ),
+        ).length;
+
+        if (subagentResponseCount < ackCount) {
+          // Still have pending transfers — route to the next one in order
+          const nextTransfer = transfers[subagentResponseCount];
+          if (nextTransfer) {
+            const nextSubagent = nextTransfer.name.replace("transfer_to_", "") as SubagentName;
+            if ((SUBAGENT_NAMES as readonly string[]).includes(nextSubagent)) {
+              return nextSubagent;
+            }
+          }
+        }
+        break; // Only inspect the most recent transfer batch
+      }
+    }
+
+    // All transfers processed (or no transfers) → END
     return END;
   }
 
   // Build subagent compiled graphs (async ones await resolveHouseholdId internally)
-  const [familyGraph, reminderGraph, recipeGraph, shoppingGraph] = await Promise.all([
-    buildFamilyAgent(householdId, cfg),
-    buildReminderAgent(householdId, cfg),
-    buildRecipeAgent(householdId, cfg),
-    buildShoppingAgent(householdId, cfg),
-  ]);
-  const calendarGraph = buildCalendarAgent(allTools, cfg);
+  const [calendarGraph, familyGraph, reminderGraph, recipeGraph, shoppingGraph] = await Promise.all(
+    [
+      buildCalendarAgent(allTools, householdId, cfg),
+      buildFamilyAgent(householdId, cfg),
+      buildReminderAgent(householdId, cfg),
+      buildRecipeAgent(householdId, cfg),
+      buildShoppingAgent(householdId, cfg),
+    ],
+  );
   const generalGraph = buildGeneralAgent(allTools, cfg);
 
   // ── Assemble the supervisor StateGraph ───────────────────────────────────

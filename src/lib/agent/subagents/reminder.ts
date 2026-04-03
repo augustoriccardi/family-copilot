@@ -90,6 +90,6 @@ export async function buildReminderAgent(householdId?: string, cfg?: AgentConfig
     tools: buildReminderTools(resolvedId),
     prompt: REMINDER_AGENT_PROMPT(),
     checkpointer: postgresCheckpointer,
-    approveAllTools: cfg?.approveAllTools ?? false,
+    approveAllTools: true, // Subagents always auto-approve — interrupt flow breaks in nested graphs
   }).build();
 }

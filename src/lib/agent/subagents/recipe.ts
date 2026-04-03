@@ -88,6 +88,6 @@ export async function buildRecipeAgent(householdId?: string, cfg?: AgentConfigOp
     tools: buildRecipeTools(resolvedId),
     prompt: RECIPE_AGENT_PROMPT(),
     checkpointer: postgresCheckpointer,
-    approveAllTools: cfg?.approveAllTools ?? false,
+    approveAllTools: true, // Subagents always auto-approve — interrupt flow breaks in nested graphs
   }).build();
 }

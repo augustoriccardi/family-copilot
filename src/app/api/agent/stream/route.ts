@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 import { streamResponse } from "@/services/agentService";
 import type { MessageResponse, FileAttachment } from "@/types/message";
+import { resolveWebIdentity } from "@/lib/identity/web-identity";
 import prisma from "@/lib/database/prisma";
 
 export const dynamic = "force-dynamic";
@@ -10,7 +11,8 @@ export const runtime = "nodejs";
  * SSE endpoint that streams incremental AI response chunks produced by the LangGraph React agent.
  * Query params:
  *  - content: user message text
- *  - threadId: (currently unused for history; placeholder for future multi-turn support)
+ *  - threadId: conversation thread ID
+ *  - callerId/callerName/callerRole: web UI identity (replaced by auth session when auth is added)
  */
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
@@ -39,17 +41,9 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  // Thread existence handled in service.
-
-  // Look up the thread's household for family subagents
-  let householdId: string | undefined;
-  if (threadId !== "unknown") {
-    const thread = await prisma.thread.findUnique({
-      where: { id: threadId },
-      select: { householdId: true },
-    });
-    householdId = thread?.householdId ?? undefined;
-  }
+  // Resolve who is talking and which household.
+  // To switch to auth: update resolveWebIdentity() in src/lib/identity/web-identity.ts only.
+  const { householdId, callerId, callerName, callerRole } = await resolveWebIdentity(req, threadId);
 
   const encoder = new TextEncoder();
   const stream = new ReadableStream<Uint8Array>({
@@ -74,12 +68,30 @@ export async function GET(req: NextRequest) {
               approveAllTools,
               attachments,
               householdId,
+              callerId,
+              callerName,
+              callerRole,
             },
           });
           for await (const chunk of iterable) {
             // Only forward AI/tool chunks; ignore human/system
             if (chunk.type === "ai" || chunk.type === "tool") {
               send(chunk);
+              // Persist agentName to DB on first chunk of each AI message.
+              // This is the authoritative source — avoids fragile frontend positional indexing.
+              if (chunk.type === "ai" && chunk.agentName && chunk.data?.id) {
+                prisma.messageMetadata
+                  .upsert({
+                    where: {
+                      threadId_messageId: { threadId, messageId: chunk.data.id },
+                    },
+                    create: { threadId, messageId: chunk.data.id, agentName: chunk.agentName },
+                    update: {},
+                  })
+                  .catch(() => {
+                    // Non-fatal: avatar will fall back to default icon
+                  });
+              }
             }
           }
 

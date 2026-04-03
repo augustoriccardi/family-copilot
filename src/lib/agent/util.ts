@@ -32,6 +32,9 @@ export interface AgentConfigOptions {
   tools?: unknown[]; // tools from registry or direct tool objects
   approveAllTools?: boolean; // if true, skip tool approval prompts
   householdId?: string; // active household for family subagents
+  callerId?: string; // FamilyMember.id of the person sending the message
+  callerName?: string; // FamilyMember.name — injected into supervisor prompt
+  callerRole?: string; // FamilyMember.role (PADRE, MADRE, etc.)
 }
 
 /**
@@ -190,4 +193,4 @@ export function sanitizeTool(tool: DynamicStructuredTool): DynamicStructuredTool
   return tool;
 }
 export const DEFAULT_MODEL_PROVIDER = "openai";
-export const DEFAULT_MODEL_NAME = "gpt-4o";
+export const DEFAULT_MODEL_NAME = "gpt-4o-mini-2024-07-18";

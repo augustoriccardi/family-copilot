@@ -38,6 +38,9 @@ export async function streamResponse(params: {
       tools: opts?.tools,
       approveAllTools: opts?.approveAllTools,
       householdId: opts?.householdId,
+      callerId: opts?.callerId,
+      callerName: opts?.callerName,
+      callerRole: opts?.callerRole,
     });
 
     // thread_id le indica a LangGraph qué checkpoint reanudar en Postgres
@@ -75,6 +78,9 @@ export async function streamResponse(params: {
     tools: opts?.tools,
     approveAllTools: opts?.approveAllTools,
     householdId: opts?.householdId,
+    callerId: opts?.callerId,
+    callerName: opts?.callerName,
+    callerRole: opts?.callerRole,
   });
 
   // thread_id vincula esta ejecución con el historial guardado en Postgres.
@@ -90,11 +96,11 @@ export async function streamResponse(params: {
 
 /**
  * Nodos cuyos AIMessages se exponen al frontend.
- * "supervisor" está excluido: solo hace routing (transfer_to_*) y el usuario
- * no necesita ver esos mensajes internos.
+ * "supervisor" está incluido para capturar respuestas directas (ej: saludos).
+ * Sus mensajes de routing (tool_calls transfer_to_*) se filtran más abajo.
  */
 const VISIBLE_NODES = new Set([
-  "agent",
+  "supervisor",
   "calendar",
   "general",
   "family",
@@ -143,6 +149,7 @@ async function* generator(
             if (toolCall?.id && toolCall?.name) {
               yield {
                 type: "ai",
+                agentName: "supervisor",
                 data: {
                   id: toolCall.id,
                   content: "",
@@ -177,7 +184,7 @@ async function* generator(
 
             if (!isAIMessage) continue;
 
-            const processedMessage = processAIMessage(message as Record<string, unknown>);
+            const processedMessage = processAIMessage(message as Record<string, unknown>, nodeName);
             if (processedMessage) {
               yield processedMessage;
             }
@@ -189,7 +196,10 @@ async function* generator(
 }
 
 // Helper function to process any AI message and return the appropriate MessageResponse
-function processAIMessage(message: Record<string, unknown>): MessageResponse | null {
+function processAIMessage(
+  message: Record<string, unknown>,
+  agentName?: string,
+): MessageResponse | null {
   const toolCalls =
     Array.isArray(message.tool_calls) && message.tool_calls.length > 0
       ? (message.tool_calls as ToolCall[])
@@ -206,6 +216,7 @@ function processAIMessage(message: Record<string, unknown>): MessageResponse | n
     // Return full AIMessageData for tool calls to preserve all information
     return {
       type: "ai",
+      agentName,
       data: {
         id: (message.id as string) || Date.now().toString(),
         content: typeof message.content === "string" ? message.content : "",
@@ -231,6 +242,7 @@ function processAIMessage(message: Record<string, unknown>): MessageResponse | n
     if (text.trim()) {
       return {
         type: "ai",
+        agentName,
         data: { id: (message.id as string) || Date.now().toString(), content: text },
       };
     }
@@ -243,8 +255,25 @@ export async function fetchThreadHistory(threadId: string): Promise<MessageRespo
   const thread = await prisma.thread.findUnique({ where: { id: threadId } });
   if (!thread) return [];
   try {
-    const history = await getHistory(threadId);
-    return history.map((msg: BaseMessage) => msg.toDict() as MessageResponse);
+    const [history, metadataRows] = await Promise.all([
+      getHistory(threadId),
+      prisma.messageMetadata.findMany({
+        where: { threadId },
+        select: { messageId: true, agentName: true },
+      }),
+    ]);
+
+    // Build a lookup map: messageId → agentName
+    const agentNameByMessageId = new Map(metadataRows.map((r) => [r.messageId, r.agentName]));
+
+    return history.map((msg: BaseMessage) => {
+      const dict = msg.toDict() as MessageResponse;
+      const messageId = (dict.data as { id?: string })?.id;
+      if (messageId && agentNameByMessageId.has(messageId)) {
+        dict.agentName = agentNameByMessageId.get(messageId);
+      }
+      return dict;
+    });
   } catch (e) {
     console.error("fetchThreadHistory error", e);
     return [];

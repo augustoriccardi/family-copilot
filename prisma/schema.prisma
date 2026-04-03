@@ -17,6 +17,24 @@ model Thread {
   household   Household? @relation(fields: [householdId], references: [id])
   createdAt   DateTime   @default(now())
   updatedAt   DateTime   @updatedAt
+
+  conversations   ConversationMessage[]
+  messageMetadata MessageMetadata[]
+}
+
+// Stores per-message metadata that LangGraph checkpoints don't include,
+// such as which agent node produced each AI message.
+model MessageMetadata {
+  id        String   @id @default(cuid())
+  threadId  String   @map("thread_id")
+  messageId String   @map("message_id")
+  agentName String   @map("agent_name")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  thread Thread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+
+  @@unique([threadId, messageId])
+  @@map("message_metadata")
 }
 
 model MCPServer {
@@ -47,17 +65,40 @@ enum MCPServerType {
 }
 
 // ──────────────────────────────────────────────
+// USUARIOS (autenticación)
+// ──────────────────────────────────────────────
+
+// Usuario real autenticado en la app (adulto con cuenta propia).
+// Los menores son FamilyMember con linkedUserId = null.
+model User {
+  id        String   @id @default(cuid())
+  name      String
+  email     String   @unique
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  households          Household[]
+  linkedMemberships   FamilyMember[]
+  calendarConnections CalendarConnection[]
+
+  @@map("users")
+}
+
+// ──────────────────────────────────────────────
 // FAMILY COPILOT — HOGAR
 // ──────────────────────────────────────────────
 
 model Household {
-  id        String   @id @default(cuid())
-  name      String
-  timezone  String   @default("America/Montevideo")
-  currency  String   @default("UYU")
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
+  id          String   @id @default(cuid())
+  name        String
+  // Usuario propietario/administrador del hogar (null = sin auth todavía)
+  ownerUserId String?  @map("owner_user_id")
+  timezone    String   @default("America/Montevideo")
+  currency    String   @default("UYU")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
 
+  owner          User?                 @relation(fields: [ownerUserId], references: [id], onDelete: SetNull)
   members        FamilyMember[]
   preferences    HouseholdPreferences?
   constraints    FamilyConstraint[]
@@ -68,6 +109,7 @@ model Household {
   reminders      Reminder[]
   conversations  ConversationMessage[]
   threads        Thread[]
+  permissions    HouseholdPermission[]
 
   @@map("households")
 }
@@ -89,19 +131,34 @@ enum FamilyRole {
 model FamilyMember {
   id            String     @id @default(cuid())
   householdId   String     @map("household_id")
+  // Usuario real vinculado (null para menores sin cuenta)
+  linkedUserId  String?    @map("linked_user_id")
   name          String
   nickname      String?
   role          FamilyRole
+  // true para niños/adolescentes sin cuenta Google propia
+  isMinor       Boolean    @default(false) @map("is_minor")
   birthdate     DateTime?
   schoolName    String?    @map("school_name")
+  // Color identificador en UI (ej: "#FF6B6B")
+  color         String?
   notes         String?
   whatsappPhone String?    @map("whatsapp_phone")
   createdAt     DateTime   @default(now()) @map("created_at")
+  updatedAt     DateTime   @updatedAt @map("updated_at")
 
-  household      Household          @relation(fields: [householdId], references: [id], onDelete: Cascade)
-  constraints    FamilyConstraint[]
-  calendarEvents CalendarEvent[]
-  reminders      Reminder[]
+  linkedUser          User?                      @relation(fields: [linkedUserId], references: [id], onDelete: SetNull)
+  household           Household                  @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  constraints         FamilyConstraint[]
+  ownedEvents         CalendarEvent[]            @relation("EventOwner")
+  responsibleFor      CalendarEvent[]            @relation("EventResponsible")
+  createdEvents       CalendarEvent[]            @relation("EventCreatedBy")
+  eventParticipations CalendarEventParticipant[]
+  reminders           Reminder[]
+  calendarAccess      MemberCalendar[]
+  calendarConnections CalendarConnection[]
+  actorPermissions    HouseholdPermission[]      @relation("PermissionActor")
+  targetPermissions   HouseholdPermission[]      @relation("PermissionTarget")
 
   @@map("family_members")
 }
@@ -276,26 +333,185 @@ model ShoppingListItem {
 // CALENDARIO
 // ──────────────────────────────────────────────
 
+enum EventType {
+  FAMILY // Involucra múltiples integrantes
+  PERSONAL // Solo del beneficiario, privado
+  MEDICAL // Turno médico / salud
+  SCHOOL // Actividad o evento escolar
+  ACTIVITY // Extracurricular (deporte, música, etc.)
+  WORK // Laboral
+  OTHER
+}
+
+enum EventStatus {
+  CONFIRMED // Confirmado
+  TENTATIVE // Pendiente de confirmar
+  CANCELLED // Cancelado
+}
+
+enum EventVisibility {
+  FAMILY // Visible a todos en el hogar
+  PRIVATE // Solo visible al propietario
+  CUSTOM // Según HouseholdPermission
+}
+
+// Rol de cada participante dentro del evento
+enum ParticipationRole {
+  ORGANIZER // Quien organizó / creó el evento
+  PARTICIPANT // Debe estar presente
+  RESPONSIBLE // Lleva / acompaña al beneficiario (ej: mamá lleva al dentista)
+  OPTIONAL // Presencia opcional
+}
+
+// Estado de confirmación del participante (RSVP)
+enum RsvpStatus {
+  PENDING // Sin respuesta todavía
+  ACCEPTED // Confirmó asistencia
+  DECLINED // Rechazó
+  MAYBE // Tentativo
+}
+
+// Tipo de calendario externo de un miembro
+enum MemberCalendarType {
+  PERSONAL // Calendario personal (ej: "primary" en Google)
+  FAMILY_SHARED // Calendario familiar compartido del hogar
+  WORK // Laboral
+  SCHOOL // Escolar
+  OTHER
+}
+
 model CalendarEvent {
+  id                  String          @id @default(cuid())
+  householdId         String          @map("household_id")
+  // Beneficiario principal del evento (para quién es)
+  memberId            String?         @map("member_id")
+  // Quién logísticamente lo gestiona (lleva / acompaña)
+  responsibleMemberId String?         @map("responsible_member_id")
+  // Quién lo creó en la app (auditoría y permisos)
+  createdByMemberId   String?         @map("created_by_member_id")
+  // En qué calendario externo vive este evento (null = solo app, sin sync)
+  memberCalendarId    String?         @map("member_calendar_id")
+  title               String
+  description         String?
+  eventType           EventType       @default(FAMILY) @map("event_type")
+  status              EventStatus     @default(CONFIRMED) @map("status")
+  visibility          EventVisibility @default(FAMILY) @map("visibility")
+  startsAt            DateTime        @map("starts_at")
+  endsAt              DateTime        @map("ends_at")
+  allDay              Boolean         @default(false) @map("all_day")
+  location            String?
+  isRecurring         Boolean         @default(false) @map("is_recurring")
+  recurrenceRule      String?         @map("recurrence_rule")
+  notes               String?
+  // Referencia al evento en el sistema externo (reemplaza googleEventId único)
+  externalProvider    String?         @map("external_provider") // "google" | "apple" | etc.
+  externalEventId     String?         @map("external_event_id") // ID en el calendar externo
+  createdAt           DateTime        @default(now()) @map("created_at")
+  updatedAt           DateTime        @updatedAt @map("updated_at")
+
+  household      Household                  @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  member         FamilyMember?              @relation("EventOwner", fields: [memberId], references: [id], onDelete: SetNull)
+  responsible    FamilyMember?              @relation("EventResponsible", fields: [responsibleMemberId], references: [id], onDelete: SetNull)
+  createdBy      FamilyMember?              @relation("EventCreatedBy", fields: [createdByMemberId], references: [id], onDelete: SetNull)
+  memberCalendar MemberCalendar?            @relation(fields: [memberCalendarId], references: [id], onDelete: SetNull)
+  reminders      Reminder[]
+  participants   CalendarEventParticipant[]
+
+  @@map("calendar_events")
+}
+
+// Muchos-a-muchos: FamilyMember ↔ CalendarEvent
+// Quién debe estar presente, en qué capacidad, y su confirmación (RSVP).
+// personalEventId = Google Event ID del calendario personal del participante
+// (distinto del externalEventId del evento principal que es el del organizador).
+model CalendarEventParticipant {
+  eventId         String            @map("event_id")
+  memberId        String            @map("member_id")
+  role            ParticipationRole @default(PARTICIPANT)
+  rsvpStatus      RsvpStatus        @default(PENDING) @map("rsvp_status")
+  // ID del evento en el calendario PERSONAL del participante (si fue invitado individualmente)
+  personalEventId String?           @map("personal_event_id")
+  notified        Boolean           @default(false)
+  addedAt         DateTime          @default(now()) @map("added_at")
+
+  event  CalendarEvent @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  member FamilyMember  @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  @@id([eventId, memberId])
+  @@map("calendar_event_participants")
+}
+
+// OAuth del usuario real hacia un proveedor de calendario (Google, Apple, etc.).
+// Separado de MCPServer OAuth: MCPServer autentica el protocolo MCP;
+// CalendarConnection autentica el acceso directo a la API del calendario.
+model CalendarConnection {
+  id            String    @id @default(cuid())
+  // null hasta que se implemente auth — se vincula al User cuando haga login
+  userId        String?   @map("user_id")
+  // ID del FamilyMember propietario de esta conexión (mientras no haya User)
+  memberId      String?   @map("member_id")
+  provider      String    @default("google") // "google" | "apple" | "microsoft"
+  providerEmail String    @map("provider_email")
+  // En producción estos tokens deben estar encriptados en reposo
+  accessToken   String    @map("access_token")
+  refreshToken  String?   @map("refresh_token")
+  expiresAt     DateTime? @map("expires_at")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  user            User?            @relation(fields: [userId], references: [id], onDelete: SetNull)
+  member          FamilyMember?    @relation(fields: [memberId], references: [id], onDelete: SetNull)
+  memberCalendars MemberCalendar[]
+
+  @@map("calendar_connections")
+}
+
+// Calendarios específicos accesibles para un miembro del hogar.
+// Un adulto puede tener: personal ("primary") + familiar compartido.
+// Un menor (isMinor=true) no tiene CalendarConnection propia;
+// sus eventos van al FAMILY_SHARED vinculado al CalendarConnection del padre/tutor.
+model MemberCalendar {
+  id                   String             @id @default(cuid())
+  householdMemberId    String             @map("household_member_id")
+  // null = sin OAuth todavía (configurado manualmente para desarrollo)
+  calendarConnectionId String?            @map("calendar_connection_id")
+  type                 MemberCalendarType @default(PERSONAL)
+  // ID del calendario en el proveedor externo ("primary" o ID completo de Google)
+  googleCalendarId     String             @map("google_calendar_id")
+  displayName          String?            @map("display_name")
+  // Si es el calendario por defecto para nuevos eventos de este miembro
+  isPrimary            Boolean            @default(false) @map("is_primary")
+  createdAt            DateTime           @default(now()) @map("created_at")
+  updatedAt            DateTime           @updatedAt @map("updated_at")
+
+  member     FamilyMember        @relation(fields: [householdMemberId], references: [id], onDelete: Cascade)
+  connection CalendarConnection? @relation(fields: [calendarConnectionId], references: [id], onDelete: SetNull)
+  events     CalendarEvent[]
+
+  @@map("member_calendars")
+}
+
+// Permisos granulares entre miembros del hogar.
+// Ausencia de fila = comportamiento por defecto según rol (PADRE/MADRE pueden todo).
+// Ejemplos: padre puede editar eventos de los hijos; hijos solo pueden ver.
+model HouseholdPermission {
   id             String   @id @default(cuid())
   householdId    String   @map("household_id")
-  googleEventId  String?  @unique @map("google_event_id")
-  memberId       String?  @map("member_id")
-  title          String
-  description    String?
-  startsAt       DateTime @map("starts_at")
-  endsAt         DateTime @map("ends_at")
-  location       String?
-  isRecurring    Boolean  @default(false) @map("is_recurring")
-  recurrenceRule String?  @map("recurrence_rule")
-  notes          String?
+  actorMemberId  String   @map("actor_member_id")
+  targetMemberId String   @map("target_member_id")
+  canView        Boolean  @default(true) @map("can_view")
+  canCreate      Boolean  @default(false) @map("can_create")
+  canEdit        Boolean  @default(false) @map("can_edit")
+  canDelete      Boolean  @default(false) @map("can_delete")
   createdAt      DateTime @default(now()) @map("created_at")
   updatedAt      DateTime @updatedAt @map("updated_at")
 
-  household Household     @relation(fields: [householdId], references: [id], onDelete: Cascade)
-  member    FamilyMember? @relation(fields: [memberId], references: [id], onDelete: SetNull)
+  household Household    @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  actor     FamilyMember @relation("PermissionActor", fields: [actorMemberId], references: [id], onDelete: Cascade)
+  target    FamilyMember @relation("PermissionTarget", fields: [targetMemberId], references: [id], onDelete: Cascade)
 
-  @@map("calendar_events")
+  @@unique([householdId, actorMemberId, targetMemberId])
+  @@map("household_permissions")
 }
 
 // ──────────────────────────────────────────────
@@ -309,19 +525,34 @@ enum ReminderStatus {
   DISMISSED
 }
 
-model Reminder {
-  id             String         @id @default(cuid())
-  householdId    String         @map("household_id")
-  memberId       String?        @map("member_id")
-  title          String
-  description    String?
-  dueAt          DateTime       @map("due_at")
-  recurrenceRule String?        @map("recurrence_rule")
-  status         ReminderStatus @default(PENDING)
-  createdAt      DateTime       @default(now()) @map("created_at")
+enum ReminderChannel {
+  WHATSAPP // Mensaje de WhatsApp Cloud API
+  EMAIL // Email estándar
+  PUSH // Notificación push (futuro)
+  IN_APP // Notificación dentro de la app
+}
 
-  household Household     @relation(fields: [householdId], references: [id], onDelete: Cascade)
-  member    FamilyMember? @relation(fields: [memberId], references: [id], onDelete: SetNull)
+model Reminder {
+  id              String          @id @default(cuid())
+  householdId     String          @map("household_id")
+  memberId        String?         @map("member_id")
+  // Evento fuente — permite cancelar recordatorios al cancelar el evento
+  calendarEventId String?         @map("calendar_event_id")
+  title           String
+  description     String?
+  dueAt           DateTime        @map("due_at")
+  recurrenceRule  String?         @map("recurrence_rule")
+  status          ReminderStatus  @default(PENDING)
+  // Canal de envío y timing
+  channel         ReminderChannel @default(IN_APP)
+  minutesBefore   Int?            @map("minutes_before")
+  sent            Boolean         @default(false)
+  sentAt          DateTime?       @map("sent_at")
+  createdAt       DateTime        @default(now()) @map("created_at")
+
+  household     Household      @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  member        FamilyMember?  @relation(fields: [memberId], references: [id], onDelete: SetNull)
+  calendarEvent CalendarEvent? @relation(fields: [calendarEventId], references: [id], onDelete: SetNull)
 
   @@map("reminders")
 }
@@ -340,6 +571,8 @@ enum MessageRole {
 model ConversationMessage {
   id          String      @id @default(cuid())
   householdId String      @map("household_id")
+  // Vincula con el thread de LangGraph donde ocurrió la conversación
+  threadId    String?     @map("thread_id")
   role        MessageRole
   content     String
   intent      String?
@@ -347,7 +580,9 @@ model ConversationMessage {
   createdAt   DateTime    @default(now()) @map("created_at")
 
   household Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  thread    Thread?   @relation(fields: [threadId], references: [id], onDelete: SetNull)
 
   @@index([householdId, createdAt])
+  @@index([threadId])
   @@map("conversation_messages")
 }

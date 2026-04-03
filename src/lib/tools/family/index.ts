@@ -2,6 +2,7 @@ import prisma from "@/lib/database/prisma";
 
 export interface AgentContext {
   householdId: string;
+  callerId?: string;
 }
 
 /**
@@ -187,4 +188,201 @@ export async function updatePantryTool(
   }
 
   return { updated: results.length, results };
+}
+
+// ── FamilyConstraint CRUD ─────────────────────────────────────────────────
+
+export async function upsertConstraintTool(
+  args: {
+    memberId?: string; // null = hogar entero
+    type: "ALLERGY" | "DISLIKE" | "MEDICATION" | "SCHEDULE_RULE" | "DIET" | "OTHER";
+    key: string;
+    value: string;
+  },
+  ctx: AgentContext,
+) {
+  const existing = await prisma.familyConstraint.findFirst({
+    where: {
+      householdId: ctx.householdId,
+      memberId: args.memberId ?? null,
+      type: args.type,
+      key: { equals: args.key, mode: "insensitive" },
+    },
+  });
+
+  if (existing) {
+    const updated = await prisma.familyConstraint.update({
+      where: { id: existing.id },
+      data: { value: args.value },
+    });
+    return {
+      action: "updated",
+      id: updated.id,
+      type: updated.type,
+      key: updated.key,
+      value: updated.value,
+    };
+  }
+
+  const created = await prisma.familyConstraint.create({
+    data: {
+      householdId: ctx.householdId,
+      memberId: args.memberId ?? null,
+      type: args.type,
+      key: args.key,
+      value: args.value,
+    },
+  });
+  return {
+    action: "created",
+    id: created.id,
+    type: created.type,
+    key: created.key,
+    value: created.value,
+  };
+}
+
+export async function deleteConstraintTool(args: { constraintId: string }, ctx: AgentContext) {
+  const constraint = await prisma.familyConstraint.findFirst({
+    where: { id: args.constraintId, householdId: ctx.householdId },
+  });
+  if (!constraint) return { success: false, error: "Restricción no encontrada" };
+
+  await prisma.familyConstraint.delete({ where: { id: args.constraintId } });
+  return { success: true, deleted: { type: constraint.type, key: constraint.key } };
+}
+
+export async function listConstraintsTool(args: { memberId?: string }, ctx: AgentContext) {
+  const constraints = await prisma.familyConstraint.findMany({
+    where: {
+      householdId: ctx.householdId,
+      ...(args.memberId ? { memberId: args.memberId } : {}),
+    },
+    include: { member: { select: { name: true } } },
+    orderBy: [{ type: "asc" }, { key: "asc" }],
+  });
+
+  return constraints.map((c) => ({
+    id: c.id,
+    member: c.member?.name ?? "Familia",
+    memberId: c.memberId,
+    type: c.type,
+    key: c.key,
+    value: c.value,
+  }));
+}
+
+// ── FamilyMember CRUD ─────────────────────────────────────────────────────
+
+export async function addFamilyMemberTool(
+  args: {
+    name: string;
+    role: "MADRE" | "PADRE" | "HIJO" | "HIJA" | "ABUELO" | "ABUELA" | "OTRO";
+    nickname?: string;
+    birthdate?: string;
+    schoolName?: string;
+    isMinor?: boolean;
+    notes?: string;
+    color?: string;
+  },
+  ctx: AgentContext,
+) {
+  const member = await prisma.familyMember.create({
+    data: {
+      householdId: ctx.householdId,
+      name: args.name,
+      role: args.role,
+      nickname: args.nickname,
+      birthdate: args.birthdate ? new Date(args.birthdate) : undefined,
+      schoolName: args.schoolName,
+      isMinor: args.isMinor ?? false,
+      notes: args.notes,
+      color: args.color,
+    },
+  });
+  return { id: member.id, name: member.name, role: member.role };
+}
+
+export async function updateFamilyMemberTool(
+  args: {
+    memberId: string;
+    name?: string;
+    nickname?: string;
+    birthdate?: string;
+    schoolName?: string;
+    notes?: string;
+    color?: string;
+  },
+  ctx: AgentContext,
+) {
+  const member = await prisma.familyMember.findFirst({
+    where: { id: args.memberId, householdId: ctx.householdId },
+  });
+  if (!member) return { success: false, error: "Integrante no encontrado" };
+
+  const updated = await prisma.familyMember.update({
+    where: { id: args.memberId },
+    data: {
+      ...(args.name !== undefined && { name: args.name }),
+      ...(args.nickname !== undefined && { nickname: args.nickname }),
+      ...(args.birthdate !== undefined && { birthdate: new Date(args.birthdate) }),
+      ...(args.schoolName !== undefined && { schoolName: args.schoolName }),
+      ...(args.notes !== undefined && { notes: args.notes }),
+      ...(args.color !== undefined && { color: args.color }),
+    },
+  });
+  return { success: true, id: updated.id, name: updated.name };
+}
+
+// ── HouseholdPreferences UPDATE ───────────────────────────────────────────
+
+export async function updateHouseholdPreferencesTool(
+  args: {
+    preferredSupermarket?: string;
+    weeklyBudget?: number;
+    shoppingDay?: string;
+    mealStyle?: string;
+  },
+  ctx: AgentContext,
+) {
+  const prefs = await prisma.householdPreferences.upsert({
+    where: { householdId: ctx.householdId },
+    create: {
+      householdId: ctx.householdId,
+      preferredSupermarket: args.preferredSupermarket,
+      weeklyBudget: args.weeklyBudget,
+      shoppingDay: args.shoppingDay,
+      mealStyle: args.mealStyle,
+    },
+    update: {
+      ...(args.preferredSupermarket !== undefined && {
+        preferredSupermarket: args.preferredSupermarket,
+      }),
+      ...(args.weeklyBudget !== undefined && { weeklyBudget: args.weeklyBudget }),
+      ...(args.shoppingDay !== undefined && { shoppingDay: args.shoppingDay }),
+      ...(args.mealStyle !== undefined && { mealStyle: args.mealStyle }),
+    },
+  });
+  return {
+    success: true,
+    supermarket: prefs.preferredSupermarket,
+    weeklyBudget: prefs.weeklyBudget?.toString(),
+    shoppingDay: prefs.shoppingDay,
+    mealStyle: prefs.mealStyle,
+  };
+}
+
+// ── PantryItem DELETE ─────────────────────────────────────────────────────
+
+export async function deletePantryItemTool(args: { itemName: string }, ctx: AgentContext) {
+  const item = await prisma.pantryItem.findFirst({
+    where: {
+      householdId: ctx.householdId,
+      itemName: { equals: args.itemName, mode: "insensitive" },
+    },
+  });
+  if (!item) return { success: false, error: "Producto no encontrado en la despensa" };
+
+  await prisma.pantryItem.delete({ where: { id: item.id } });
+  return { success: true, deleted: item.itemName };
 }

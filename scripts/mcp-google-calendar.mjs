@@ -91,6 +91,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
               items: { type: "string" },
               description: "List of attendee email addresses",
             },
+            calendarId: {
+              type: "string",
+              description:
+                "Google Calendar ID to use. Pass MemberCalendar.googleCalendarId from get_member_calendars. Use 'primary' for the main calendar. Defaults to the server's configured GOOGLE_CALENDAR_ID.",
+            },
           },
         },
       },
@@ -113,6 +118,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
               description: "Only return events starting before this ISO 8601 date-time",
             },
             query: { type: "string", description: "Free-text search query" },
+            calendarId: {
+              type: "string",
+              description:
+                "Google Calendar ID to query. Defaults to the server's configured GOOGLE_CALENDAR_ID.",
+            },
           },
         },
       },
@@ -131,6 +141,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             endDateTime: { type: "string", description: "New end date-time (ISO 8601)" },
             location: { type: "string" },
             timeZone: { type: "string", description: "IANA time zone name (default: UTC)" },
+            calendarId: {
+              type: "string",
+              description:
+                "Google Calendar ID containing the event. Defaults to the server's configured GOOGLE_CALENDAR_ID.",
+            },
           },
         },
       },
@@ -142,6 +157,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           required: ["eventId"],
           properties: {
             eventId: { type: "string", description: "The Google Calendar event ID to delete" },
+            calendarId: {
+              type: "string",
+              description:
+                "Google Calendar ID containing the event. Defaults to the server's configured GOOGLE_CALENDAR_ID.",
+            },
           },
         },
       },
@@ -164,7 +184,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const startDateTime = args.startDateTime ?? args.start?.dateTime ?? args.start;
       const endDateTime = args.endDateTime ?? args.end?.dateTime ?? args.end;
       const event = await calendar.events.insert({
-        calendarId: GOOGLE_CALENDAR_ID,
+        calendarId: args.calendarId ?? GOOGLE_CALENDAR_ID,
         requestBody: {
           summary: title,
           description: args.description,
@@ -202,7 +222,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       };
 
       const res = await calendar.events.list({
-        calendarId: GOOGLE_CALENDAR_ID,
+        calendarId: args.calendarId ?? GOOGLE_CALENDAR_ID,
         maxResults: args.maxResults ?? 10,
         timeMin: toRFC3339(args.timeMin) ?? new Date().toISOString(),
         timeMax: toRFC3339(args.timeMax),
@@ -254,7 +274,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       const updated = await calendar.events.patch({
-        calendarId: GOOGLE_CALENDAR_ID,
+        calendarId: args.calendarId ?? GOOGLE_CALENDAR_ID,
         eventId: args.eventId,
         requestBody: patch,
       });
@@ -279,7 +299,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     if (name === "delete_event") {
       try {
         await calendar.events.delete({
-          calendarId: GOOGLE_CALENDAR_ID,
+          calendarId: args.calendarId ?? GOOGLE_CALENDAR_ID,
           eventId: args.eventId,
         });
         return {
