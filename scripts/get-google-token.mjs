@@ -34,7 +34,10 @@ const REDIRECT_URI = `http://localhost:${PORT}/oauth2callback`;
 
 const auth = new google.auth.OAuth2(GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, REDIRECT_URI);
 
-const SCOPES = ["https://www.googleapis.com/auth/calendar"];
+const SCOPES = [
+  "https://www.googleapis.com/auth/calendar",
+  "https://www.googleapis.com/auth/gmail.readonly",
+];
 
 const authUrl = auth.generateAuthUrl({
   access_type: "offline",

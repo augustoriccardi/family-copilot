@@ -81,3 +81,69 @@ export async function dismissReminderTool(args: { reminderId: string }, ctx: Age
   });
   return { dismissed: result.count > 0 };
 }
+
+export async function deleteReminderTool(args: { reminderId: string }, ctx: AgentContext) {
+  const deleted = await prisma.reminder.deleteMany({
+    where: { id: args.reminderId, householdId: ctx.householdId },
+  });
+  return { deleted: deleted.count > 0 };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CREATE REMINDER FROM NOTIFICATION REQUEST (calendar → reminder handoff)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export async function createReminderFromNotificationTool(
+  args: {
+    title: string;
+    message?: string;
+    dueAt: string;
+    memberId?: string;
+    calendarEventId?: string;
+    recurrenceRule?: string;
+    minutesBefore?: number;
+  },
+  ctx: AgentContext,
+) {
+  if (args.memberId) {
+    const member = await prisma.familyMember.findFirst({
+      where: { id: args.memberId, householdId: ctx.householdId },
+      select: { id: true },
+    });
+    if (!member) {
+      return { error: `Miembro con ID "${args.memberId}" no encontrado en este hogar.` };
+    }
+  }
+
+  if (args.calendarEventId) {
+    const event = await prisma.calendarEvent.findFirst({
+      where: { id: args.calendarEventId, householdId: ctx.householdId },
+      select: { id: true },
+    });
+    if (!event) {
+      return {
+        error: `Evento con ID "${args.calendarEventId}" no encontrado. Se creará el recordatorio sin vinculación al evento.`,
+      };
+    }
+  }
+
+  const reminder = await prisma.reminder.create({
+    data: {
+      householdId: ctx.householdId,
+      memberId: args.memberId ?? null,
+      calendarEventId: args.calendarEventId ?? null,
+      title: args.title,
+      description: args.message,
+      dueAt: new Date(args.dueAt),
+      recurrenceRule: args.recurrenceRule ?? null,
+      minutesBefore: args.minutesBefore ?? null,
+    },
+  });
+
+  return {
+    reminderId: reminder.id,
+    title: reminder.title,
+    dueAt: reminder.dueAt.toISOString(),
+    linkedToEvent: !!args.calendarEventId,
+  };
+}

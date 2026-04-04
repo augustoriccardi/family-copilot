@@ -11,14 +11,25 @@ import {
 } from "./util";
 import { SUPERVISOR_PROMPT, CallerInfo } from "./prompts/supervisor";
 import { buildCalendarAgent } from "./subagents/calendar";
-import { buildGeneralAgent } from "./subagents/general";
+import { buildInboxAgent } from "./subagents/inbox";
 import { buildFamilyAgent } from "./subagents/family";
+import { buildLibraryAgent } from "./subagents/library";
 import { buildReminderAgent } from "./subagents/reminder";
 import { buildRecipeAgent } from "./subagents/recipe";
 import { buildShoppingAgent } from "./subagents/shopping";
+import { buildNotificationsAgent } from "./subagents/notification";
 
 /** The names of all subagents the supervisor can route to */
-const SUBAGENT_NAMES = ["calendar", "general", "family", "reminder", "recipe", "shopping"] as const;
+const SUBAGENT_NAMES = [
+  "calendar",
+  "inbox",
+  "family",
+  "library",
+  "reminder",
+  "recipe",
+  "shopping",
+  "notification",
+] as const;
 type SubagentName = (typeof SUBAGENT_NAMES)[number];
 
 /**
@@ -43,7 +54,7 @@ function buildTransferTools(): DynamicStructuredTool[] {
  * Builds and compiles the full supervisor StateGraph.
  *
  * Graph structure:
- *   START → supervisor → [calendar | general | family | reminder | recipe | shopping] → supervisor → ... → END
+ *   START → supervisor → [calendar | inbox | family | reminder | recipe | shopping] → supervisor → ... → END
  *
  * The supervisor LLM uses transfer tools to route.
  * Each subagent is a compiled LangGraph node (with its own tool_approval + tools).
@@ -223,43 +234,56 @@ export async function buildSupervisorGraph(
   }
 
   // Build subagent compiled graphs (async ones await resolveHouseholdId internally)
-  const [calendarGraph, familyGraph, reminderGraph, recipeGraph, shoppingGraph] = await Promise.all(
-    [
-      buildCalendarAgent(allTools, householdId, cfg),
-      buildFamilyAgent(householdId, cfg),
-      buildReminderAgent(householdId, cfg),
-      buildRecipeAgent(householdId, cfg),
-      buildShoppingAgent(householdId, cfg),
-    ],
-  );
-  const generalGraph = buildGeneralAgent(allTools, cfg);
+  const [
+    calendarGraph,
+    familyGraph,
+    reminderGraph,
+    recipeGraph,
+    shoppingGraph,
+    notificationsGraph,
+  ] = await Promise.all([
+    buildCalendarAgent(allTools, householdId, cfg),
+    buildFamilyAgent(householdId, cfg),
+    buildReminderAgent(householdId, cfg),
+    buildRecipeAgent(householdId, cfg),
+    buildShoppingAgent(householdId, cfg),
+    buildNotificationsAgent(householdId, cfg),
+  ]);
+  const inboxGraph = buildInboxAgent(allTools, householdId ?? null, cfg, caller);
+  const libraryGraph = buildLibraryAgent(householdId ?? null, cfg, caller);
 
   // ── Assemble the supervisor StateGraph ───────────────────────────────────
   const graph = new StateGraph(MessagesAnnotation)
     .addNode("supervisor", supervisorNode)
     .addNode("calendar", calendarGraph)
-    .addNode("general", generalGraph)
+    .addNode("inbox", inboxGraph)
     .addNode("family", familyGraph)
+    .addNode("library", libraryGraph)
     .addNode("reminder", reminderGraph)
     .addNode("recipe", recipeGraph)
     .addNode("shopping", shoppingGraph)
+    .addNode("notifications", notificationsGraph)
     .addEdge(START, "supervisor")
     .addConditionalEdges("supervisor", routeAfterSupervisor, {
       calendar: "calendar",
-      general: "general",
+      inbox: "inbox",
       family: "family",
+      library: "library",
       reminder: "reminder",
       recipe: "recipe",
       shopping: "shopping",
+      notifications: "notifications",
       [END]: END,
     })
     // After each subagent finishes, return to supervisor
     .addEdge("calendar", "supervisor")
-    .addEdge("general", "supervisor")
+    .addEdge("inbox", "supervisor")
     .addEdge("family", "supervisor")
+    .addEdge("library", "supervisor")
     .addEdge("reminder", "supervisor")
     .addEdge("recipe", "supervisor")
-    .addEdge("shopping", "supervisor");
+    .addEdge("shopping", "supervisor")
+    .addEdge("notifications", "supervisor");
 
   return graph.compile({ checkpointer: postgresCheckpointer });
 }

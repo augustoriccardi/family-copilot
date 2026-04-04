@@ -22,6 +22,7 @@ import {
   deleteCalendarEventTool,
   findFreeSlotsTool,
   checkConflictsTool,
+  confirmEventCandidateTool,
 } from "../../tools/calendar/index";
 import prisma from "../../database/prisma";
 
@@ -235,6 +236,32 @@ function buildPrismaCalendarTools(householdId: string | null, callerId?: string)
           });
         return JSON.stringify({ memberId: resolvedMemberId, calendars });
       },
+    }),
+
+    new DynamicStructuredTool({
+      name: "confirm_event_candidate",
+      description:
+        "Crea un evento a partir de un EventCandidate estructurado producido por el agente inbox. Úsalo cuando el usuario confirma un evento detectado automáticamente (flyer, circular, imagen). NO lo uses para eventos creados manualmente — para eso usá create_family_event.",
+      schema: z.object({
+        title: z.string().describe("Título del evento"),
+        startAt: z.string().describe("Fecha y hora de inicio en ISO 8601"),
+        endAt: z.string().optional().describe("Fecha y hora de fin en ISO 8601 (opcional)"),
+        location: z.string().optional().describe("Lugar del evento"),
+        memberId: z.string().optional().describe("ID del miembro beneficiario"),
+        notes: z.string().optional().describe("Notas adicionales del evento"),
+        confidence: z
+          .number()
+          .min(0)
+          .max(1)
+          .optional()
+          .describe("Confianza del inbox al detectar el evento (0–1)"),
+        source: z
+          .enum(["email", "web", "pdf", "image", "manual"])
+          .optional()
+          .describe("Origen del candidato"),
+      }),
+      func: async (args) =>
+        noHousehold ? NO_HOUSEHOLD : JSON.stringify(await confirmEventCandidateTool(args, ctx)),
     }),
   ];
 }

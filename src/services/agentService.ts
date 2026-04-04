@@ -102,9 +102,11 @@ export async function streamResponse(params: {
 const VISIBLE_NODES = new Set([
   "supervisor",
   "calendar",
-  "general",
+  "inbox",
   "family",
+  "library",
   "reminder",
+  "notification",
   "recipe",
   "shopping",
 ]);

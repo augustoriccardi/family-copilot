@@ -2,6 +2,7 @@ import type { MessageResponse, ToolApprovalCallbacks } from "@/types/message";
 import { Bot } from "lucide-react";
 import Image from "next/image";
 import rehypeKatex from "rehype-katex";
+import { useState } from "react";
 import { cn } from "@/lib/utils";
 import { getMessageContent, hasToolCalls, getToolCalls } from "@/services/messageUtils";
 import { ToolCallDisplay } from "./ToolCallDisplay";
@@ -11,12 +12,34 @@ import MDEditor from "@uiw/react-md-editor";
 const AGENT_AVATARS: Record<string, string> = {
   supervisor: "/avatars/supervisor.png",
   calendar: "/avatars/calendar.png",
-  general: "/avatars/general.png",
+  inbox: "/avatars/inbox.png",
   family: "/avatars/family.png",
   reminder: "/avatars/reminder.png",
   recipe: "/avatars/recipe.png",
   shopping: "/avatars/shopping.png",
+  library: "/avatars/library.png",
 };
+
+function AgentAvatar({ src, agentName }: { src: string; agentName: string }) {
+  const [errored, setErrored] = useState(false);
+  if (errored) {
+    return (
+      <div className="flex h-full w-full items-center justify-center">
+        <Bot className="text-primary h-5 w-5" />
+      </div>
+    );
+  }
+  return (
+    <Image
+      src={src}
+      alt={agentName}
+      fill
+      sizes="40px"
+      className="object-cover"
+      onError={() => setErrored(true)}
+    />
+  );
+}
 
 interface AIMessageProps {
   message: MessageResponse;
@@ -48,13 +71,7 @@ export const AIMessage = ({
     <div className="flex gap-3">
       <div className="bg-primary/10 relative h-10 w-10 shrink-0 self-start overflow-hidden rounded-full">
         {avatarSrc ? (
-          <Image
-            src={avatarSrc}
-            alt={message.agentName ?? "agent"}
-            fill
-            sizes="40px"
-            className="object-cover"
-          />
+          <AgentAvatar src={avatarSrc} agentName={message.agentName ?? "agent"} />
         ) : (
           <div className="flex h-full w-full items-center justify-center">
             <Bot className="text-primary h-5 w-5" />

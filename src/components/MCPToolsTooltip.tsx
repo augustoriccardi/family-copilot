@@ -30,7 +30,7 @@ export function MCPToolsTooltip({ data, isVisible, className = "" }: MCPToolsToo
       <div className="max-h-48 space-y-1 overflow-y-auto">
         {allTools.map((toolName, index) => (
           <div key={index} className="flex items-center gap-2">
-            <span className="h-1.5 w-1.5 flex-shrink-0 rounded-full bg-gray-400"></span>
+            <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-gray-400"></span>
             <span className="font-mono text-xs text-gray-600 dark:text-gray-400">{toolName}</span>
           </div>
         ))}

@@ -207,3 +207,99 @@ export async function markItemsPurchasedTool(
 
   return { marked: result.count };
 }
+
+export async function removeItemsFromListTool(
+  args: { listId: string; itemIds: string[] },
+  ctx: AgentContext,
+) {
+  const list = await prisma.shoppingList.findFirst({
+    where: { id: args.listId, householdId: ctx.householdId },
+  });
+  if (!list) throw new Error("Lista no encontrada");
+
+  const result = await prisma.shoppingListItem.deleteMany({
+    where: { id: { in: args.itemIds }, shoppingListId: args.listId },
+  });
+
+  return { removed: result.count };
+}
+
+export async function deleteShoppingListTool(args: { listId: string }, ctx: AgentContext) {
+  const list = await prisma.shoppingList.findFirst({
+    where: { id: args.listId, householdId: ctx.householdId },
+  });
+  if (!list) throw new Error("Lista no encontrada");
+
+  await prisma.shoppingList.delete({ where: { id: args.listId } });
+  return { deleted: true, listId: args.listId };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ADD PRODUCT INTENT ITEMS (recipe/inbox → shopping handoff)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Receives ProductIntentItem[] from recipe or inbox and adds them to the active shopping list.
+ * Creates a new list if no active list exists.
+ */
+export async function addProductIntentItemsTool(
+  args: {
+    items: Array<{
+      canonicalName: string;
+      quantity?: number;
+      unit?: string;
+      category?: string;
+      notes?: string;
+    }>;
+    /** Optional: target an existing list. If omitted, uses or creates the active list. */
+    listId?: string;
+    /** Source for traceability */
+    source?: "recipe" | "inbox" | "family" | "manual";
+    sourceLabel?: string;
+  },
+  ctx: AgentContext,
+) {
+  let targetListId = args.listId;
+
+  if (!targetListId) {
+    const active = await prisma.shoppingList.findFirst({
+      where: { householdId: ctx.householdId, status: { in: ["DRAFT", "ACTIVE"] } },
+      orderBy: { createdAt: "desc" },
+      select: { id: true },
+    });
+
+    if (active) {
+      targetListId = active.id;
+    } else {
+      const newList = await prisma.shoppingList.create({
+        data: {
+          householdId: ctx.householdId,
+          name: args.sourceLabel
+            ? `Compras — ${args.sourceLabel}`
+            : `Compras — ${new Date().toLocaleDateString("es-AR")}`,
+          sourceType: args.source === "recipe" ? "RECIPE" : "AUTO",
+          status: "DRAFT",
+        },
+        select: { id: true },
+      });
+      targetListId = newList.id;
+    }
+  }
+
+  const created = await prisma.shoppingListItem.createMany({
+    data: args.items.map((item) => ({
+      shoppingListId: targetListId!,
+      itemName: item.canonicalName,
+      quantity: item.quantity ?? null,
+      unit: item.unit ?? null,
+      category: item.category ?? "Otros",
+      notes: item.notes ?? null,
+    })),
+  });
+
+  return {
+    listId: targetListId,
+    itemsAdded: created.count,
+    source: args.source ?? "manual",
+  };
+}

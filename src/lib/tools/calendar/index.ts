@@ -36,7 +36,7 @@ async function syncToGoogleCalendar(params: {
   eventDbId: string;
   /** Per-member refresh token (from CalendarConnection). Falls back to global GOOGLE_REFRESH_TOKEN. */
   refreshToken?: string | null;
-}): Promise<string | null> {
+}): Promise<{ eventId: string; htmlLink: string | null } | null> {
   const { GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REFRESH_TOKEN } = process.env;
   const effectiveRefreshToken = params.refreshToken ?? GOOGLE_REFRESH_TOKEN;
   if (!GOOGLE_CLIENT_ID || !GOOGLE_CLIENT_SECRET || !effectiveRefreshToken) return null;
@@ -65,7 +65,7 @@ async function syncToGoogleCalendar(params: {
         data: { externalEventId: gcalEventId },
       });
     }
-    return gcalEventId;
+    return gcalEventId ? { eventId: gcalEventId, htmlLink: res.data.htmlLink ?? null } : null;
   } catch (err) {
     console.error("[syncToGoogleCalendar] Error:", err);
     return null;
@@ -255,6 +255,7 @@ export async function createCalendarEventTool(
   // Auto-sync to Google Calendar if the event has a configured external calendar.
   // This is done server-side so the LLM doesn't need to call a separate MCP step.
   let googleCalendarEventId: string | null = null;
+  let googleCalendarHtmlLink: string | null = null;
   let syncedToGoogle = false;
   if (event.memberCalendar?.googleCalendarId) {
     // Build a rich description from all available metadata
@@ -272,7 +273,7 @@ export async function createCalendarEventTool(
     descParts.push(`🆔 ID app: ${event.id}`);
     const richDescription = descParts.join("\n");
 
-    googleCalendarEventId = await syncToGoogleCalendar({
+    const gcalResult = await syncToGoogleCalendar({
       title: event.title,
       description: richDescription,
       startDateTime: toLocalISO(event.startsAt, tz),
@@ -283,6 +284,8 @@ export async function createCalendarEventTool(
       eventDbId: event.id,
       refreshToken: event.memberCalendar.connection?.refreshToken,
     });
+    googleCalendarEventId = gcalResult?.eventId ?? null;
+    googleCalendarHtmlLink = gcalResult?.htmlLink ?? null;
     syncedToGoogle = !!googleCalendarEventId;
   }
 
@@ -304,6 +307,7 @@ export async function createCalendarEventTool(
           synced: true,
           calendarId: event.memberCalendar!.googleCalendarId,
           eventId: googleCalendarEventId,
+          htmlLink: googleCalendarHtmlLink,
         }
       : event.memberCalendar?.googleCalendarId
         ? {
@@ -669,4 +673,55 @@ function buildParticipantFilter(
       { participants: { some: { memberId: { in: participantIds } } } },
     ],
   };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CONFIRM EVENT CANDIDATE (from inbox)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Validates an EventCandidate produced by the inbox agent and creates the calendar event.
+ * This is the structured entry point for inbox→calendar handoff.
+ */
+export async function confirmEventCandidateTool(
+  args: {
+    title: string;
+    startAt: string; // ISO 8601
+    endAt?: string; // ISO 8601
+    location?: string;
+    memberId?: string;
+    notes?: string;
+    /** Original confidence from inbox agent (0–1). Stored in description for traceability. */
+    confidence?: number;
+    source?: "email" | "web" | "pdf" | "image" | "manual";
+  },
+  ctx: AgentContext,
+) {
+  // Derive a sensible default end time if not provided (1 hour after start)
+  const startDate = new Date(args.startAt);
+  const endDate = args.endAt
+    ? new Date(args.endAt)
+    : new Date(startDate.getTime() + 60 * 60 * 1000);
+
+  const description = [
+    args.notes,
+    args.source ? `Fuente: ${args.source}` : null,
+    args.confidence !== undefined ? `Confianza: ${Math.round(args.confidence * 100)}%` : null,
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  return createCalendarEventTool(
+    {
+      title: args.title,
+      description: description || undefined,
+      startDateTime: startDate.toISOString(),
+      endDateTime: endDate.toISOString(),
+      location: args.location,
+      memberId: args.memberId,
+      eventType: "SCHOOL",
+      notes: args.notes,
+    },
+    ctx,
+  );
 }

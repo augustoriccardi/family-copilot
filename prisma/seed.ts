@@ -3,11 +3,13 @@
  *
  * Crea:
  *   - 1 Household "Familia Test"
- *   - 4 FamilyMember (Augusto, Laura, Paulina, Benjamín)
+ *   - 5 FamilyMember (Augusto, Pilar, Violeta, Paulina, Alma)
  *   - HouseholdPreferences
  *   - FamilyConstraints de ejemplo (alergia, regla de horario)
- *   - 3 PantryItems
+ *   - 5 PantryItems
  *   - 1 Thread vinculado al hogar
+ *   - MemberCalendar (calendarios de Google para adultos)
+ *   - 1 Document de ejemplo (comunicado escolar desde prisma/fixtures/)
  *
  * Uso:
  *   pnpm prisma:seed
@@ -17,6 +19,9 @@
 
 import { config } from "dotenv";
 import { PrismaClient, FamilyRole, ConstraintType } from "@prisma/client";
+import { readFileSync } from "fs";
+import { join } from "path";
+import { uploadFile } from "../src/lib/storage/upload";
 
 config(); // carga .env para leer vars de Google Calendar
 
@@ -108,7 +113,7 @@ async function main() {
   });
 
   console.log(
-    `✅ Miembros creados: ${augusto.name} (${augusto.id}), ${pilar.name} (${pilar.id}), ${paulina.name} (${paulina.id}), ${violeta.name} (${violeta.id})`,
+    `✅ Miembros creados: ${augusto.name} (${augusto.id}), ${pilar.name} (${pilar.id}), ${violeta.name} (${violeta.id}), ${paulina.name} (${paulina.id}), ${alma.name} (${alma.id})`,
   );
 
   // ── Preferences ───────────────────────────────────────────────────────────
@@ -304,6 +309,30 @@ async function main() {
   }
 
   console.log(`✅ Calendarios creados: Augusto PERSONAL (${personalCalendarId})`);
+
+  // ── Document de ejemplo (Biblia Reina Valera 1960) ────────────────────────
+  const pdfPath = join(__dirname, "fixtures", "biblia-reina-valera-1960.pdf");
+  const pdfBuffer = readFileSync(pdfPath);
+  const fileKey = `documents/${household.id}/biblia-reina-valera-1960.pdf`;
+  const fileUrl = await uploadFile(
+    pdfBuffer,
+    fileKey,
+    "application/pdf",
+    "biblia-reina-valera-1960.pdf",
+  );
+
+  await prisma.document.create({
+    data: {
+      householdId: household.id,
+      title: "Biblia Reina Valera 1960",
+      fileUrl,
+      fileKey,
+      mimeType: "application/pdf",
+      subject: "Biblia — Reina Valera 1960",
+      source: "seed",
+    },
+  });
+  console.log(`✅ Document creado: Biblia Reina Valera 1960 (${fileKey})`);
 
   // ── Resumen ───────────────────────────────────────────────────────────────
   console.log("\n─────────────────────────────────────────");

@@ -98,18 +98,20 @@ model Household {
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @updatedAt @map("updated_at")
 
-  owner          User?                 @relation(fields: [ownerUserId], references: [id], onDelete: SetNull)
-  members        FamilyMember[]
-  preferences    HouseholdPreferences?
-  constraints    FamilyConstraint[]
-  recipes        Recipe[]
-  pantryItems    PantryItem[]
-  shoppingLists  ShoppingList[]
-  calendarEvents CalendarEvent[]
-  reminders      Reminder[]
-  conversations  ConversationMessage[]
-  threads        Thread[]
-  permissions    HouseholdPermission[]
+  owner              User?                 @relation(fields: [ownerUserId], references: [id], onDelete: SetNull)
+  members            FamilyMember[]
+  preferences        HouseholdPreferences?
+  constraints        FamilyConstraint[]
+  recipes            Recipe[]
+  pantryItems        PantryItem[]
+  shoppingLists      ShoppingList[]
+  merchantConnectors MerchantConnector[]
+  calendarEvents     CalendarEvent[]
+  reminders          Reminder[]
+  conversations      ConversationMessage[]
+  threads            Thread[]
+  permissions        HouseholdPermission[]
+  documents          Document[]
 
   @@map("households")
 }
@@ -159,6 +161,7 @@ model FamilyMember {
   calendarConnections CalendarConnection[]
   actorPermissions    HouseholdPermission[]      @relation("PermissionActor")
   targetPermissions   HouseholdPermission[]      @relation("PermissionTarget")
+  documents           Document[]
 
   @@map("family_members")
 }
@@ -327,6 +330,31 @@ model ShoppingListItem {
   sourceRecipe Recipe?      @relation(fields: [sourceRecipeId], references: [id], onDelete: SetNull)
 
   @@map("shopping_list_items")
+}
+
+// ──────────────────────────────────────────────
+// SUPERMERCADOS (VTEX Uruguay)
+// ──────────────────────────────────────────────
+
+enum MerchantId {
+  DEVOTO
+  DISCO
+  GEANT
+}
+
+// Conectores de supermercado habilitados por hogar.
+// Por defecto los 3 están disponibles; se pueden deshabilitar individualmente.
+model MerchantConnector {
+  id          String     @id @default(cuid())
+  householdId String     @map("household_id")
+  merchantId  MerchantId @map("merchant_id")
+  enabled     Boolean    @default(true)
+  createdAt   DateTime   @default(now()) @map("created_at")
+
+  household Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+
+  @@unique([householdId, merchantId])
+  @@map("merchant_connectors")
 }
 
 // ──────────────────────────────────────────────
@@ -585,4 +613,52 @@ model ConversationMessage {
   @@index([householdId, createdAt])
   @@index([threadId])
   @@map("conversation_messages")
+}
+
+// ──────────────────────────────────────────────
+// DOCUMENTOS (agente library — Stage 1 MVP)
+// ──────────────────────────────────────────────
+
+// Documento indexado por el hogar (PDF, imagen, texto, etc.)
+// Originado desde inbox y procesado por library.
+model Document {
+  id          String   @id @default(cuid())
+  householdId String   @map("household_id")
+  // Miembro al que pertenece el documento (null = todo el hogar)
+  memberId    String?  @map("member_id")
+  title       String
+  // URL pública en MinIO / S3
+  fileUrl     String   @map("file_url")
+  // Key en el bucket S3 (para eliminación)
+  fileKey     String   @map("file_key")
+  mimeType    String   @map("mime_type")
+  // Materia/tema (ej: "matemáticas", "ciencias")
+  subject     String?
+  // Origen del documento
+  source      String   @default("manual") // "manual" | "inbox" | "email" | "whatsapp"
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  household Household       @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  member    FamilyMember?   @relation(fields: [memberId], references: [id], onDelete: SetNull)
+  chunks    DocumentChunk[]
+
+  @@index([householdId])
+  @@index([memberId])
+  @@map("documents")
+}
+
+// Fragmento de texto de un documento (para RAG en Stage 3 con pgvector)
+model DocumentChunk {
+  id         String   @id @default(cuid())
+  documentId String   @map("document_id")
+  content    String
+  chunkIndex Int      @map("chunk_index")
+  // embedding Float[] -- descomenta cuando se active pgvector en Stage 3
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  document Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@index([documentId])
+  @@map("document_chunks")
 }

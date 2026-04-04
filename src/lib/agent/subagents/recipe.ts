@@ -10,7 +10,12 @@ import {
 } from "../util";
 import { RECIPE_AGENT_PROMPT } from "../prompts/recipe";
 import { resolveHouseholdId, getPantryItemsTool } from "../../tools/family/index";
-import { saveRecipeTool, searchRecipesTool } from "../../tools/recipes/index";
+import {
+  saveRecipeTool,
+  searchRecipesTool,
+  updateRecipeTool,
+  deleteRecipeTool,
+} from "../../tools/recipes/index";
 
 const ingredientSchema = z.object({
   name: z.string(),
@@ -73,6 +78,54 @@ function buildRecipeTools(householdId: string | null) {
       schema: z.object({}),
       func: async () =>
         noHousehold ? NO_HOUSEHOLD : JSON.stringify(await getPantryItemsTool(ctx)),
+    }),
+
+    new DynamicStructuredTool({
+      name: "update_recipe",
+      description:
+        "Actualiza los datos de una receta existente (título, descripción, tiempos, tags, ingredientes). Si se pasan ingredientes, reemplaza los actuales por completo.",
+      schema: z.object({
+        recipeId: z.string().describe("ID de la receta a actualizar"),
+        title: z.string().optional(),
+        description: z.string().optional(),
+        servings: z.number().optional(),
+        prepTimeMinutes: z.number().optional(),
+        cookTimeMinutes: z.number().optional(),
+        tags: z.array(z.string()).optional(),
+        instructions: z.string().optional(),
+        imageUrl: z.string().optional(),
+        ingredients: z
+          .array(ingredientSchema)
+          .optional()
+          .describe("Si se pasa, reemplaza todos los ingredientes"),
+      }),
+      func: async (args) =>
+        noHousehold ? NO_HOUSEHOLD : JSON.stringify(await updateRecipeTool(args, ctx)),
+    }),
+
+    new DynamicStructuredTool({
+      name: "delete_recipe",
+      description: "Elimina una receta y sus ingredientes de forma permanente.",
+      schema: z.object({
+        recipeId: z.string().describe("ID de la receta a eliminar"),
+      }),
+      func: async (args) =>
+        noHousehold ? NO_HOUSEHOLD : JSON.stringify(await deleteRecipeTool(args, ctx)),
+    }),
+
+    new DynamicStructuredTool({
+      name: "create_ingredient_intent",
+      description:
+        "Normaliza los ingredientes de una receta a ProductIntentItem[] para transferirlos al agente shopping. Usá esto después de que el usuario confirme que quiere comprar los ingredientes de una receta.",
+      schema: z.object({
+        recipeId: z.string().describe("ID de la receta cuyos ingredientes se normalizarán"),
+        memberId: z
+          .string()
+          .optional()
+          .describe("ID del miembro para quien se compran los ingredientes (opcional)"),
+      }),
+      func: async (args) =>
+        noHousehold ? NO_HOUSEHOLD : JSON.stringify(await createIngredientIntentTool(args, ctx)),
     }),
   ];
 }

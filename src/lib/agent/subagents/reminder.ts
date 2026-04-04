@@ -15,6 +15,8 @@ import {
   listRemindersTool,
   completeReminderTool,
   dismissReminderTool,
+  deleteReminderTool,
+  createReminderFromNotificationTool,
 } from "../../tools/reminders/index";
 
 const NO_HOUSEHOLD = JSON.stringify({
@@ -75,6 +77,45 @@ function buildReminderTools(householdId: string | null) {
       }),
       func: async (args) =>
         noHousehold ? NO_HOUSEHOLD : JSON.stringify(await dismissReminderTool(args, ctx)),
+    }),
+
+    new DynamicStructuredTool({
+      name: "delete_reminder",
+      description:
+        "Elimina un recordatorio de forma permanente. Usá esto solo si el usuario pide borrarlo explícitamente; para cancelarlo usá dismiss_reminder.",
+      schema: z.object({
+        reminderId: z.string().describe("ID del recordatorio a eliminar"),
+      }),
+      func: async (args) =>
+        noHousehold ? NO_HOUSEHOLD : JSON.stringify(await deleteReminderTool(args, ctx)),
+    }),
+
+    new DynamicStructuredTool({
+      name: "create_reminder_from_event",
+      description:
+        "Crea un recordatorio vinculado a un evento de calendario. Punto de entrada para el handoff calendar→reminder. El agente calendar usa esto después de crear un evento para programar avisos automáticos.",
+      schema: z.object({
+        title: z.string().describe("Título del recordatorio"),
+        message: z.string().optional().describe("Mensaje adicional del recordatorio"),
+        dueAt: z.string().describe("Fecha y hora del aviso en ISO 8601"),
+        memberId: z.string().optional().describe("ID del miembro destinatario"),
+        calendarEventId: z
+          .string()
+          .optional()
+          .describe("ID del CalendarEvent al que está vinculado este recordatorio"),
+        recurrenceRule: z
+          .string()
+          .optional()
+          .describe("Regla de recurrencia en formato iCal RRULE"),
+        minutesBefore: z
+          .number()
+          .optional()
+          .describe("Minutos antes del evento para enviar el aviso (ej: 30, 60, 1440)"),
+      }),
+      func: async (args) =>
+        noHousehold
+          ? NO_HOUSEHOLD
+          : JSON.stringify(await createReminderFromNotificationTool(args, ctx)),
     }),
   ];
 }

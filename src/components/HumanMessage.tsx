@@ -62,9 +62,19 @@ export const HumanMessage = ({ message }: HumanMessageProps) => {
           // Text files with file_metadata
           (item.type === "text" && "file_metadata" in item && !!item.file_metadata),
       )
-      .map((item) => {
+      .map((item, index) => {
         if (item.file_metadata) {
           return item.file_metadata;
+        }
+        // image_url items without file_metadata (inline base64 from checkpoint)
+        if (item.type === "image_url" && "image_url" in item && item.image_url?.url) {
+          return {
+            url: item.image_url.url,
+            key: `inline-image-${index}`,
+            name: "imagen adjunta",
+            type: "image/jpeg",
+            size: 0,
+          } as FileAttachment;
         }
         return null;
       })
@@ -115,7 +125,6 @@ export const HumanMessage = ({ message }: HumanMessageProps) => {
               ))}
             </div>
           )}
-
           {/* Message Text */}
           <div className="prose dark:prose-invert max-w-none">
             <p className="my-0">{getMessageContent(message)}</p>

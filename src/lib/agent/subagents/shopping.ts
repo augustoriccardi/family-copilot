@@ -16,7 +16,12 @@ import {
   generateGroceryListFromRecipesTool,
   getActiveShoppingListTool,
   markItemsPurchasedTool,
+  removeItemsFromListTool,
+  deleteShoppingListTool,
+  addProductIntentItemsTool,
 } from "../../tools/shopping/index";
+import { createReminderTool } from "../../tools/reminders/index";
+import { markListPurchasedAndUpdatePantryTool } from "../../tools/shopping/pantry-handoff";
 
 const shoppingItemSchema = z.object({
   itemName: z.string(),
@@ -93,6 +98,112 @@ function buildShoppingTools(householdId: string | null) {
       }),
       func: async (args) =>
         noHousehold ? NO_HOUSEHOLD : JSON.stringify(await markItemsPurchasedTool(args, ctx)),
+    }),
+
+    new DynamicStructuredTool({
+      name: "remove_items_from_list",
+      description: "Elimina ítems específicos de una lista de compras.",
+      schema: z.object({
+        listId: z.string().describe("ID de la lista de compras"),
+        itemIds: z.array(z.string()).describe("IDs de los ítems a eliminar"),
+      }),
+      func: async (args) =>
+        noHousehold ? NO_HOUSEHOLD : JSON.stringify(await removeItemsFromListTool(args, ctx)),
+    }),
+
+    new DynamicStructuredTool({
+      name: "delete_shopping_list",
+      description: "Elimina una lista de compras completa y todos sus ítems.",
+      schema: z.object({
+        listId: z.string().describe("ID de la lista a eliminar"),
+      }),
+      func: async (args) =>
+        noHousehold ? NO_HOUSEHOLD : JSON.stringify(await deleteShoppingListTool(args, ctx)),
+    }),
+
+    new DynamicStructuredTool({
+      name: "add_product_intent_items",
+      description:
+        "Agrega ProductIntentItem[] a la lista de compras activa (o crea una nueva si no hay). Punto de entrada para el handoff recipe→shopping. Los ítems vienen pre-normalizados desde recipe, inbox o family.",
+      schema: z.object({
+        items: z
+          .array(
+            z.object({
+              canonicalName: z.string(),
+              quantity: z.number().optional(),
+              unit: z.string().optional(),
+              category: z.string().optional(),
+              notes: z.string().optional(),
+            }),
+          )
+          .describe("Lista estructurada de productos a agregar"),
+        listId: z
+          .string()
+          .optional()
+          .describe(
+            "ID de lista destino (opcional — si se omite, usa la lista activa o crea una nueva)",
+          ),
+        source: z
+          .enum(["recipe", "inbox", "family", "manual"])
+          .optional()
+          .describe("Origen de los ítems para trazabilidad"),
+        sourceLabel: z.string().optional().describe("Nombre del origen (ej: nombre de la receta)"),
+      }),
+      func: async (args) =>
+        noHousehold ? NO_HOUSEHOLD : JSON.stringify(await addProductIntentItemsTool(args, ctx)),
+    }),
+
+    new DynamicStructuredTool({
+      name: "create_shopping_reminder",
+      description:
+        "Crea un recordatorio de 'ir de compras' con la lista activa en el cuerpo. El usuario recibirá la nota cuando llegue la fecha. Ideal cuando el usuario dice 'recordame ir al super' o 'agendame la compra para el sábado'.",
+      schema: z.object({
+        dueAt: z
+          .string()
+          .describe("Fecha y hora ISO 8601 para el recordatorio, ej: '2026-04-05T10:00:00'"),
+        memberId: z.string().optional().describe("ID del miembro responsable (opcional)"),
+        customTitle: z
+          .string()
+          .optional()
+          .describe("Título personalizado (por defecto: 'Ir de compras')"),
+      }),
+      func: async (args) => {
+        if (noHousehold) return NO_HOUSEHOLD;
+        // Get the active list to embed in the reminder description
+        const list = await getActiveShoppingListTool(ctx);
+        const items = Array.isArray(list?.items)
+          ? list.items
+              .map(
+                (i: { itemName: string; quantity?: number; unit?: string }) =>
+                  `• ${i.itemName}${i.quantity ? ` (${i.quantity}${i.unit ? " " + i.unit : ""})` : ""}`,
+              )
+              .join("\n")
+          : "";
+        return JSON.stringify(
+          await createReminderTool(
+            {
+              title: args.customTitle ?? "Ir de compras",
+              description: items ? `Lista de compras:\n${items}` : undefined,
+              dueAt: args.dueAt,
+              memberId: args.memberId,
+            },
+            ctx,
+          ),
+        );
+      },
+    }),
+
+    new DynamicStructuredTool({
+      name: "mark_list_purchased",
+      description:
+        "Marca la lista de compras como comprada y actualiza el stock de la despensa con todos los ítems de la lista. Usá esto cuando el usuario confirme que ya hizo las compras: 'ya fui al super', 'compré todo', 'listo la compra'.",
+      schema: z.object({
+        listId: z.string().optional().describe("ID de la lista (si se omite, usa la activa)"),
+      }),
+      func: async (args) =>
+        noHousehold
+          ? NO_HOUSEHOLD
+          : JSON.stringify(await markListPurchasedAndUpdatePantryTool(args, ctx)),
     }),
   ];
 }
