@@ -14,6 +14,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { useRouter, usePathname } from "next/navigation";
+import { ProposalInbox } from "./ProposalInbox";
 
 interface ThreadListProps {
   onOpenMCPConfig: () => void;
@@ -141,6 +142,7 @@ export function ThreadList({ onOpenMCPConfig }: ThreadListProps) {
         </div>
       </div>
       <div className="flex-1 space-y-1 overflow-y-auto px-2 pb-3">
+        <ProposalInbox />
         {filtered.map((thread) => {
           const active = pathname === `/thread/${thread.id}`;
           const isRenaming = renamingId === thread.id;

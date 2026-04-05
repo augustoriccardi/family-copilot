@@ -14,6 +14,7 @@
 import { streamResponse } from "@/services/agentService";
 import { resolveWhatsAppIdentity, provisionNewHousehold } from "./whatsapp-resolver";
 import prisma from "@/lib/database/prisma";
+import type { FileAttachment } from "@/types/message";
 
 const WELCOME_MESSAGE = `👋 ¡Bienvenido a *Family Copilot*!
 
@@ -33,8 +34,9 @@ Creé un hogar para vos automáticamente. Podés personalizarlo desde la app web
 export async function handleWhatsAppMessage(
   fromPhone: string,
   userText: string,
+  attachments?: FileAttachment[],
 ): Promise<string | null> {
-  if (!userText.trim()) return null;
+  if (!userText.trim() && (!attachments || attachments.length === 0)) return null;
 
   // 1. Resolve which household + thread to use; auto-provision on first contact
   let identity = await resolveWhatsAppIdentity(fromPhone);
@@ -66,12 +68,13 @@ export async function handleWhatsAppMessage(
   // 4. Stream through the agent — collect all text chunks
   const iterable = await streamResponse({
     threadId,
-    userText,
+    userText: userText || "Analizá el archivo adjunto y detectá información relevante.",
     opts: {
       householdId,
       callerId,
       callerName: identity.displayName,
       callerRole,
+      attachments,
       // Tools run automatically — no human-in-the-loop approval in WhatsApp channel
       approveAllTools: true,
     },

@@ -19,7 +19,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createHmac } from "crypto";
 import { handleWhatsAppMessage } from "@/lib/whatsapp/whatsapp-agent";
-import { sendWhatsAppMessage, markMessageAsRead } from "@/lib/whatsapp/whatsapp-service";
+import { sendWhatsAppMessage, markMessageAsRead, downloadWhatsAppMedia } from "@/lib/whatsapp/whatsapp-service";
+import { uploadFile } from "@/lib/storage/upload";
+import { v4 as uuidv4 } from "uuid";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -119,20 +121,67 @@ async function processIncoming(message: WhatsAppMessage) {
   // Mark as read so the user sees the blue ticks
   await markMessageAsRead(messageId);
 
-  // Only handle text messages for now (images/audio could be added later)
-  if (messageType !== "text" || !message.text?.body) {
+  const userText = message.text?.body?.trim() ?? "";
+
+  // ── Media messages (image, document, audio, video, sticker) ──────────────
+  // Supported for inbox analysis: image, document
+  // Unsupported types get a friendly reply
+  const SUPPORTED_MEDIA_TYPES = ["image", "document"];
+  const UNSUPPORTED_MEDIA_TYPES = ["audio", "video", "sticker", "location", "contacts"];
+
+  if (UNSUPPORTED_MEDIA_TYPES.includes(messageType)) {
     await sendWhatsAppMessage(
       fromPhone,
-      "Por ahora solo proceso mensajes de texto. 😊 Escribime lo que necesitás.",
+      "Por ahora solo proceso texto, imágenes y documentos (PDF). 😊 Escribime o mandame una foto o archivo.",
     );
     return;
   }
 
-  const userText = message.text.body.trim();
-  if (!userText) return;
+  let attachments: import("@/types/message").FileAttachment[] = [];
+
+  if (SUPPORTED_MEDIA_TYPES.includes(messageType)) {
+    const mediaId =
+      (message as WhatsAppMessage & { image?: { id: string }; document?: { id: string } })
+        .image?.id ??
+      (message as WhatsAppMessage & { image?: { id: string }; document?: { id: string } })
+        .document?.id;
+
+    if (mediaId) {
+      try {
+        const media = await downloadWhatsAppMedia(mediaId);
+        if (media) {
+          const fileKey = `uploads/${uuidv4()}.${media.mimeType.split("/")[1]?.split(";")[0] ?? "bin"}`;
+          const fileUrl = await uploadFile(media.buffer, fileKey, media.mimeType, media.filename);
+          attachments = [
+            {
+              url: fileUrl,
+              key: fileKey,
+              name: media.filename,
+              type: media.mimeType,
+              size: media.buffer.length,
+            },
+          ];
+        }
+      } catch (err) {
+        console.error("[whatsapp] Failed to process media", { mediaId, err });
+      }
+    }
+
+    // If no text caption, use a default prompt for the agent
+    if (!userText && attachments.length === 0) {
+      await sendWhatsAppMessage(
+        fromPhone,
+        "No pude procesar el archivo. Intentá de nuevo o mandame el texto directamente.",
+      );
+      return;
+    }
+  } else if (messageType !== "text" || !userText) {
+    // Unknown type or empty text
+    return;
+  }
 
   try {
-    const reply = await handleWhatsAppMessage(fromPhone, userText);
+    const reply = await handleWhatsAppMessage(fromPhone, userText, attachments.length > 0 ? attachments : undefined);
     if (reply) {
       await sendWhatsAppMessage(fromPhone, reply);
     }
@@ -152,6 +201,8 @@ interface WhatsAppMessage {
   from: string;
   type: string;
   text?: { body: string };
+  image?: { id: string; mime_type?: string; sha256?: string; caption?: string };
+  document?: { id: string; mime_type?: string; filename?: string; sha256?: string; caption?: string };
   timestamp: string;
 }
 

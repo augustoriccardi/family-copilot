@@ -71,6 +71,49 @@ export async function markMessageAsRead(messageId: string): Promise<void> {
 }
 
 /**
+ * Downloads a WhatsApp media file given its mediaId.
+ * Returns the file content as a Buffer plus its MIME type.
+ * Uses the two-step process: first get the download URL, then fetch the bytes.
+ */
+export async function downloadWhatsAppMedia(
+  mediaId: string,
+): Promise<{ buffer: Buffer; mimeType: string; filename: string } | null> {
+  const token = accessToken();
+  const version = GRAPH_API_VERSION;
+
+  // Step 1: retrieve the media URL from Meta
+  const metaRes = await fetch(`https://graph.facebook.com/${version}/${mediaId}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+
+  if (!metaRes.ok) {
+    console.error("[whatsapp] Failed to retrieve media URL", mediaId, metaRes.status);
+    return null;
+  }
+
+  const meta = (await metaRes.json()) as { url: string; mime_type: string; id: string };
+
+  // Step 2: download the actual bytes
+  const fileRes = await fetch(meta.url, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+
+  if (!fileRes.ok) {
+    console.error("[whatsapp] Failed to download media bytes", mediaId, fileRes.status);
+    return null;
+  }
+
+  const buffer = Buffer.from(await fileRes.arrayBuffer());
+  const mimeType = meta.mime_type ?? "application/octet-stream";
+
+  // Derive a reasonable filename from mimeType (WhatsApp doesn't provide one for most types)
+  const ext = mimeType.split("/")[1]?.split(";")[0] ?? "bin";
+  const filename = `whatsapp-${mediaId}.${ext}`;
+
+  return { buffer, mimeType, filename };
+}
+
+/**
  * Splits text into chunks of at most 4096 characters, breaking at newlines when possible.
  */
 function splitMessage(text: string, maxLen = 4096): string[] {

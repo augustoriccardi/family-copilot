@@ -112,6 +112,7 @@ model Household {
   threads            Thread[]
   permissions        HouseholdPermission[]
   documents          Document[]
+  proposals          ActionProposal[]
 
   @@map("households")
 }
@@ -162,6 +163,7 @@ model FamilyMember {
   actorPermissions    HouseholdPermission[]      @relation("PermissionActor")
   targetPermissions   HouseholdPermission[]      @relation("PermissionTarget")
   documents           Document[]
+  proposals           ActionProposal[]
 
   @@map("family_members")
 }
@@ -661,4 +663,54 @@ model DocumentChunk {
 
   @@index([documentId])
   @@map("document_chunks")
+}
+
+// ──────────────────────────────────────────────
+// PROPUESTAS DE ACCIÓN (inbox → revisión → confirmar)
+// ──────────────────────────────────────────────
+
+enum ProposalType {
+  EVENT
+  REMINDER
+  SHOPPING_ITEM
+  DOCUMENT
+  OTHER
+}
+
+enum ProposalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  EDITED
+}
+
+// Una propuesta generada por inbox (email, imagen, PDF, WhatsApp) que espera
+// la revisión del usuario antes de convertirse en una entidad real.
+model ActionProposal {
+  id          String         @id @default(cuid())
+  householdId String         @map("household_id")
+  // Miembro al que aplica la propuesta (null = toda la familia)
+  memberId    String?        @map("member_id")
+  type        ProposalType
+  status      ProposalStatus @default(PENDING)
+  title       String
+  description String?
+  // Payload estructurado: EventCandidate, ProductIntentItem, etc.
+  payload     Json           @db.JsonB
+  // Origen del evento: "email" | "pdf" | "image" | "whatsapp" | "web" | "manual"
+  source      String
+  // Nivel de confianza del agente al extraer (0.0–1.0)
+  confidence  Float          @default(0.0)
+  // Por qué el agente lo detectó como relevante
+  notes       String?
+  // Cuándo fue revisado (aprobado o rechazado)
+  resolvedAt  DateTime?      @map("resolved_at")
+  createdAt   DateTime       @default(now()) @map("created_at")
+  updatedAt   DateTime       @updatedAt @map("updated_at")
+
+  household Household     @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  member    FamilyMember? @relation(fields: [memberId], references: [id], onDelete: SetNull)
+
+  @@index([householdId, status])
+  @@map("action_proposals")
 }

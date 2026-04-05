@@ -16,6 +16,11 @@ import {
   listDocumentsForInboxTool,
 } from "../../tools/inbox/index";
 import { readGmailInboxTool } from "../../tools/inbox/gmail";
+import {
+  createProposalTool,
+  listPendingProposalsTool,
+} from "../../tools/proposals/index";
+import { ProposalType, Prisma } from "@prisma/client";
 
 /** Tool prefixes that belong to specialized agents and should be excluded from the inbox agent */
 const SPECIALIZED_TOOL_PREFIXES = ["google-calendar", "google_calendar", "calendar"];
@@ -115,6 +120,84 @@ function buildInboxTools(householdId: string | null) {
       }),
       func: async (args) =>
         noHousehold ? NO_HOUSEHOLD : JSON.stringify(await listDocumentsForInboxTool(args, ctx)),
+    }),
+
+    new DynamicStructuredTool({
+      name: "create_proposal",
+      description:
+        "Crea una propuesta de acción pendiente de revisión. SIEMPRE usá esta herramienta cuando detectes un evento, recordatorio, compra o documento importante en una fuente externa (email, imagen, PDF, WhatsApp). NUNCA crees el evento/recordatorio directamente — el usuario debe revisarlo primero.",
+      schema: z.object({
+        type: z
+          .enum(["EVENT", "REMINDER", "SHOPPING_ITEM", "DOCUMENT", "OTHER"])
+          .describe(
+            "Tipo de propuesta: EVENT para eventos o fechas, REMINDER para recordatorios, SHOPPING_ITEM para productos, DOCUMENT para documentos, OTHER para otras",
+          ),
+        title: z.string().describe("Título claro y conciso de la propuesta"),
+        description: z
+          .string()
+          .optional()
+          .describe("Descripción adicional de la propuesta"),
+        payload: z
+          .record(z.unknown())
+          .describe(
+            "Datos estructurados de la propuesta. Para EVENT: { title, startAt, endAt?, location?, memberId? }. Para REMINDER: { title, dueAt, memberId? }. Para SHOPPING_ITEM: { name, quantity?, unit? }.",
+          ),
+        source: z
+          .string()
+          .describe(
+            "Origen del evento detectado: 'email', 'pdf', 'image', 'whatsapp', 'web', 'manual'",
+          ),
+        confidence: z
+          .number()
+          .min(0)
+          .max(1)
+          .optional()
+          .describe(
+            "Confianza en la detección (0.0–1.0). Usá 0.9+ para datos claros y explícitos, 0.5–0.8 para datos parciales o ambiguos.",
+          ),
+        memberId: z
+          .string()
+          .optional()
+          .describe("ID del miembro de la familia al que aplica la propuesta (opcional)"),
+        notes: z
+          .string()
+          .optional()
+          .describe("Nota interna explicando por qué detectaste esto como relevante"),
+      }),
+      func: async (args) =>
+        noHousehold
+          ? NO_HOUSEHOLD
+          : JSON.stringify(
+              await createProposalTool(
+                { ...args, type: args.type as ProposalType, payload: args.payload as unknown as Prisma.InputJsonObject },
+                ctx,
+              ),
+            ),
+    }),
+
+    new DynamicStructuredTool({
+      name: "list_pending_proposals",
+      description:
+        "Lista las propuestas pendientes de revisión del hogar. Usá esto cuando el usuario pregunte qué hay pendiente de revisar o aprobar.",
+      schema: z.object({
+        memberId: z
+          .string()
+          .optional()
+          .describe("Filtrar por miembro (opcional)"),
+        type: z
+          .enum(["EVENT", "REMINDER", "SHOPPING_ITEM", "DOCUMENT", "OTHER"])
+          .optional()
+          .describe("Filtrar por tipo de propuesta (opcional)"),
+      }),
+      func: async (args) =>
+        noHousehold
+          ? NO_HOUSEHOLD
+          : JSON.stringify(
+              await listPendingProposalsTool(
+                { ...args, type: args.type as ProposalType | undefined },
+                ctx,
+              ),
+            ),
     }),
   ];
 }
