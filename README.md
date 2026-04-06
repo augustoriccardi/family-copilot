@@ -279,7 +279,242 @@ _MCP server configuration form with example filesystem server setup_
 
 For detailed architecture documentation, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
-## Development
+## Database Schema
+
+```mermaid
+erDiagram
+    User {
+        string id PK
+        string name
+        string email
+    }
+    Household {
+        string id PK
+        string name
+        string ownerUserId FK
+        string timezone
+        string currency
+    }
+    FamilyMember {
+        string id PK
+        string householdId FK
+        string linkedUserId FK
+        string name
+        string nickname
+        enum role
+        boolean isMinor
+        string whatsappPhone
+    }
+    HouseholdPreferences {
+        string id PK
+        string householdId FK
+        string preferredSupermarket
+        decimal weeklyBudget
+    }
+    FamilyConstraint {
+        string id PK
+        string householdId FK
+        string memberId FK
+        enum type
+        string key
+        string value
+    }
+    HouseholdPermission {
+        string id PK
+        string householdId FK
+        string actorMemberId FK
+        string targetMemberId FK
+        boolean canView
+        boolean canCreate
+        boolean canEdit
+        boolean canDelete
+    }
+    Thread {
+        string id PK
+        string householdId FK
+        string title
+    }
+    MessageMetadata {
+        string id PK
+        string threadId FK
+        string messageId
+        string agentName
+    }
+    ConversationMessage {
+        string id PK
+        string householdId FK
+        string threadId FK
+        enum role
+        string content
+    }
+    MCPServer {
+        string id PK
+        string name
+        enum type
+        boolean enabled
+        string command
+        string url
+    }
+    Recipe {
+        string id PK
+        string householdId FK
+        string title
+        enum sourceType
+        int servings
+    }
+    RecipeIngredient {
+        string id PK
+        string recipeId FK
+        string ingredientName
+        decimal quantity
+        string unit
+    }
+    PantryItem {
+        string id PK
+        string householdId FK
+        string itemName
+        decimal quantity
+        datetime expirationDate
+    }
+    ShoppingList {
+        string id PK
+        string householdId FK
+        string name
+        enum status
+        enum sourceType
+    }
+    ShoppingListItem {
+        string id PK
+        string shoppingListId FK
+        string sourceRecipeId FK
+        string itemName
+        decimal quantity
+        boolean isPurchased
+    }
+    MerchantConnector {
+        string id PK
+        string householdId FK
+        enum merchantId
+        boolean enabled
+    }
+    CalendarConnection {
+        string id PK
+        string userId FK
+        string memberId FK
+        string provider
+        string providerEmail
+    }
+    MemberCalendar {
+        string id PK
+        string householdMemberId FK
+        string calendarConnectionId FK
+        enum type
+        string googleCalendarId
+        boolean isPrimary
+    }
+    CalendarEvent {
+        string id PK
+        string householdId FK
+        string memberId FK
+        string responsibleMemberId FK
+        string createdByMemberId FK
+        string memberCalendarId FK
+        string title
+        enum eventType
+        enum status
+        datetime startsAt
+        datetime endsAt
+        string location
+        string externalEventId
+    }
+    CalendarEventParticipant {
+        string eventId FK
+        string memberId FK
+        enum role
+        enum rsvpStatus
+    }
+    Reminder {
+        string id PK
+        string householdId FK
+        string memberId FK
+        string calendarEventId FK
+        string title
+        datetime dueAt
+        enum status
+        enum channel
+    }
+    Document {
+        string id PK
+        string householdId FK
+        string memberId FK
+        string title
+        string fileUrl
+        string mimeType
+        string source
+    }
+    DocumentChunk {
+        string id PK
+        string documentId FK
+        string content
+        int chunkIndex
+    }
+    ActionProposal {
+        string id PK
+        string householdId FK
+        string memberId FK
+        string calendarEventId FK
+        enum type
+        enum status
+        string title
+        json payload
+        float confidence
+        string source
+        string sourceFileUrl
+    }
+
+    User ||--o{ Household : "owns"
+    User ||--o{ FamilyMember : "linked to"
+    User ||--o{ CalendarConnection : "has"
+
+    Household ||--|| HouseholdPreferences : "has"
+    Household ||--o{ FamilyMember : "has"
+    Household ||--o{ FamilyConstraint : "has"
+    Household ||--o{ HouseholdPermission : "has"
+    Household ||--o{ Thread : "has"
+    Household ||--o{ ConversationMessage : "has"
+    Household ||--o{ Recipe : "has"
+    Household ||--o{ PantryItem : "has"
+    Household ||--o{ ShoppingList : "has"
+    Household ||--o{ MerchantConnector : "enables"
+    Household ||--o{ CalendarEvent : "has"
+    Household ||--o{ Reminder : "has"
+    Household ||--o{ Document : "has"
+    Household ||--o{ ActionProposal : "has"
+
+    FamilyMember ||--o{ FamilyConstraint : "has"
+    FamilyMember ||--o{ CalendarEvent : "owns"
+    FamilyMember ||--o{ CalendarEventParticipant : "participates in"
+    FamilyMember ||--o{ Reminder : "has"
+    FamilyMember ||--o{ MemberCalendar : "has"
+    FamilyMember ||--o{ CalendarConnection : "has"
+    FamilyMember ||--o{ Document : "owns"
+    FamilyMember ||--o{ ActionProposal : "owns"
+
+    Thread ||--o{ MessageMetadata : "has"
+    Thread ||--o{ ConversationMessage : "has"
+
+    Recipe ||--o{ RecipeIngredient : "has"
+    Recipe ||--o{ ShoppingListItem : "sourced by"
+    ShoppingList ||--o{ ShoppingListItem : "contains"
+
+    CalendarConnection ||--o{ MemberCalendar : "gives access to"
+    MemberCalendar ||--o{ CalendarEvent : "hosts"
+    CalendarEvent ||--o{ CalendarEventParticipant : "has"
+    CalendarEvent ||--o{ Reminder : "triggers"
+    CalendarEvent ||--o{ ActionProposal : "sourced from"
+
+    Document ||--o{ DocumentChunk : "split into"
+```
 
 ### Available Scripts
 
