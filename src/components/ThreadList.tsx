@@ -12,8 +12,10 @@ import {
   RefreshCcw,
   Settings,
   Trash2,
+  CalendarDays,
 } from "lucide-react";
 import { useRouter, usePathname } from "next/navigation";
+import Link from "next/link";
 import { ProposalInbox } from "./ProposalInbox";
 
 interface ThreadListProps {
@@ -233,7 +235,18 @@ export function ThreadList({ onOpenMCPConfig }: ThreadListProps) {
       </div>
 
       {/* MCP Configuration Button */}
-      <div className="border-t border-gray-200 p-3">
+      <div className="space-y-2 border-t border-gray-200 p-3">
+        <Link
+          href="/calendar"
+          className={`flex w-full items-center gap-2 rounded-md px-3 py-2 text-xs font-medium transition-colors ${
+            pathname === "/calendar"
+              ? "bg-indigo-50 text-indigo-700"
+              : "text-gray-600 hover:bg-gray-100"
+          }`}
+        >
+          <CalendarDays className="h-4 w-4" />
+          Calendario
+        </Link>
         <button
           onClick={onOpenMCPConfig}
           className="flex w-full cursor-pointer items-center justify-center gap-2 rounded-md bg-gray-50 px-3 py-2 text-xs font-medium text-gray-600 transition-colors hover:bg-gray-100"

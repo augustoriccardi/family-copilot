@@ -13,6 +13,7 @@ export function getMessageContent(message: MessageResponse): string {
   }
   if (Array.isArray(message.data?.content)) {
     // Extract text from content array, excluding file content (items with file_metadata)
+    // and internal agent metadata blocks (file attachment instructions for the LLM)
     const textParts = message.data.content
       .filter((item: unknown) => {
         if (typeof item === "object" && item !== null) {
@@ -20,6 +21,16 @@ export function getMessageContent(message: MessageResponse): string {
           // Skip items with file_metadata (these are file attachments, not user text)
           if ("file_metadata" in obj && obj.file_metadata) {
             return false;
+          }
+          // Skip internal metadata blocks injected for the agent (not user-visible)
+          if ("text" in obj && typeof obj.text === "string") {
+            const text = obj.text as string;
+            if (
+              text.startsWith("[Adjuntos para analyze_image_content") ||
+              text.startsWith("[Adjuntos disponibles para analyze_image_content")
+            ) {
+              return false;
+            }
           }
           // Include text items without file_metadata
           return "text" in obj && typeof obj.text === "string";

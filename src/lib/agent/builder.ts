@@ -141,6 +141,9 @@ export class AgentBuilder {
     ];
     const modelInvoker = this.model.bindTools(this.tools);
     const response = await modelInvoker.invoke(messages);
+    console.log(
+      `[subagent:callModel] tool_calls=${JSON.stringify((response as any).tool_calls?.map((tc: any) => tc.name))}, content preview=${typeof response.content === "string" ? response.content.slice(0, 120) : ""}`,
+    );
     return { messages: response };
   }
 

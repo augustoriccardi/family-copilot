@@ -11,6 +11,8 @@ interface GmailMessage {
   date: string;
   snippet: string;
   body: string;
+  /** Direct link to open this email in Gmail web */
+  messageUrl: string;
 }
 
 /**
@@ -199,6 +201,7 @@ export async function readGmailInboxTool(
         date: get("Date"),
         snippet: msg.snippet ?? "",
         body,
+        messageUrl: `https://mail.google.com/mail/#inbox/${id}`,
       });
     } catch {
       // skip failed individual messages

@@ -19,7 +19,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createHmac } from "crypto";
 import { handleWhatsAppMessage } from "@/lib/whatsapp/whatsapp-agent";
-import { sendWhatsAppMessage, markMessageAsRead, downloadWhatsAppMedia } from "@/lib/whatsapp/whatsapp-service";
+import {
+  sendWhatsAppMessage,
+  markMessageAsRead,
+  downloadWhatsAppMedia,
+} from "@/lib/whatsapp/whatsapp-service";
 import { uploadFile } from "@/lib/storage/upload";
 import { v4 as uuidv4 } from "uuid";
 
@@ -141,10 +145,10 @@ async function processIncoming(message: WhatsAppMessage) {
 
   if (SUPPORTED_MEDIA_TYPES.includes(messageType)) {
     const mediaId =
-      (message as WhatsAppMessage & { image?: { id: string }; document?: { id: string } })
-        .image?.id ??
-      (message as WhatsAppMessage & { image?: { id: string }; document?: { id: string } })
-        .document?.id;
+      (message as WhatsAppMessage & { image?: { id: string }; document?: { id: string } }).image
+        ?.id ??
+      (message as WhatsAppMessage & { image?: { id: string }; document?: { id: string } }).document
+        ?.id;
 
     if (mediaId) {
       try {
@@ -181,7 +185,11 @@ async function processIncoming(message: WhatsAppMessage) {
   }
 
   try {
-    const reply = await handleWhatsAppMessage(fromPhone, userText, attachments.length > 0 ? attachments : undefined);
+    const reply = await handleWhatsAppMessage(
+      fromPhone,
+      userText,
+      attachments.length > 0 ? attachments : undefined,
+    );
     if (reply) {
       await sendWhatsAppMessage(fromPhone, reply);
     }
@@ -202,7 +210,13 @@ interface WhatsAppMessage {
   type: string;
   text?: { body: string };
   image?: { id: string; mime_type?: string; sha256?: string; caption?: string };
-  document?: { id: string; mime_type?: string; filename?: string; sha256?: string; caption?: string };
+  document?: {
+    id: string;
+    mime_type?: string;
+    filename?: string;
+    sha256?: string;
+    caption?: string;
+  };
   timestamp: string;
 }
 

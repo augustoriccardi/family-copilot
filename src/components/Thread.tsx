@@ -40,10 +40,13 @@ export const Thread = ({ threadId, onFirstMessageSent }: ThreadProps) => {
   // Detect first AI/tool/error message arrival after initial user message to trigger redirect
   useEffect(() => {
     if (awaitingFirstResponse && !isSending) {
-      const hasNonHuman = messages.some((m) => m.type !== "human");
-      if (hasNonHuman) {
+      const hasSuccessResponse = messages.some((m) => m.type === "ai" || m.type === "tool");
+      if (hasSuccessResponse) {
         setAwaitingFirstResponse(false);
         if (onFirstMessageSent) onFirstMessageSent(threadId);
+      } else if (messages.some((m) => m.type === "error")) {
+        // Error on first message — stay on current page so the user can see and retry
+        setAwaitingFirstResponse(false);
       }
     }
   }, [awaitingFirstResponse, isSending, messages, onFirstMessageSent, threadId]);

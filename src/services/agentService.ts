@@ -48,6 +48,7 @@ export async function streamResponse(params: {
     const iterable = await agent.stream(inputs as any, {
       streamMode: ["updates"],
       configurable: { thread_id: threadId },
+      recursionLimit: 50,
     });
 
     return generator(iterable);
@@ -60,9 +61,36 @@ export async function streamResponse(params: {
   let messageContent: string | Array<{ type: string; text?: string; image_url?: { url: string } }>;
 
   if (opts?.attachments && opts.attachments.length > 0) {
-    // Multimodal: convertir cada adjunto a bloques { type: "image_url" } o { type: "text" }
-    const attachmentContents = await processAttachmentsForAI(opts.attachments);
-    messageContent = [{ type: "text", text: userText }, ...attachmentContents];
+    // Images and PDFs are analyzed via the analyze_image_content tool (which calls vision internally).
+    // We only pass a metadata block so the inbox agent knows the fileKey to use — no base64 in state.
+    // Text files are still inlined since they're small and don't cause context explosion.
+    const textAttachments = opts.attachments.filter(
+      (a) => !a.type.startsWith("image/") && a.type !== "application/pdf",
+    );
+    const mediaAttachments = opts.attachments.filter(
+      (a) => a.type.startsWith("image/") || a.type === "application/pdf",
+    );
+
+    const contentParts: Array<{ type: string; text?: string; image_url?: { url: string } }> = [
+      { type: "text", text: userText },
+    ];
+
+    if (mediaAttachments.length > 0) {
+      const fileMetaBlock =
+        `[Adjuntos para analyze_image_content — usá el fileKey exacto de esta lista:\n` +
+        mediaAttachments
+          .map((a) => `  fileKey="${a.key}" mimeType="${a.type}" name="${a.name}"`)
+          .join("\n") +
+        `\nNUNCA inventes ni adivines el fileKey — usá el valor literal de arriba.]`;
+      contentParts.push({ type: "text", text: fileMetaBlock });
+    }
+
+    if (textAttachments.length > 0) {
+      const textContents = await processAttachmentsForAI(textAttachments);
+      contentParts.push(...textContents);
+    }
+
+    messageContent = contentParts;
   } else {
     // Texto puro: string es más limpio y evita overhead de parsing en el LLM
     messageContent = userText;
@@ -89,6 +117,7 @@ export async function streamResponse(params: {
   const iterable = await agent.stream(inputs as any, {
     streamMode: ["updates"],
     configurable: { thread_id: threadId },
+    recursionLimit: 50,
   });
 
   return generator(iterable);

@@ -1,5 +1,5 @@
 "use client";
-import { ReactNode, useCallback, useState } from "react";
+import { ReactNode, useCallback, useEffect, useState } from "react";
 import { ThreadList } from "./ThreadList";
 import Sidebar from "./Sidebar";
 import Header from "./Header";
@@ -10,7 +10,13 @@ interface MainLayoutProps {
 }
 
 export function MainLayout({ children }: MainLayoutProps) {
+  // Start open on desktop (md+), closed on mobile
   const [isSidebarOpen, setSidebarOpen] = useState(false);
+  useEffect(() => {
+    if (window.matchMedia("(min-width: 768px)").matches) {
+      setSidebarOpen(true);
+    }
+  }, []);
   const [showMCPConfig, setShowMCPConfig] = useState(false);
   const toggleSidebar = useCallback(() => setSidebarOpen((v) => !v), []);
   const openMCPConfig = useCallback(() => setShowMCPConfig(true), []);

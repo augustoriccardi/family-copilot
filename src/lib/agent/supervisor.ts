@@ -80,12 +80,18 @@ export async function buildSupervisorGraph(
       "LLM does not support tool binding — use a model that supports function calling (gpt-4o, gemini-2.0-flash, etc.)",
     );
   }
-  const supervisorLLM = llm.bindTools(transferTools);
+  const supervisorLLM = llm.bindTools(transferTools, {
+    parallel_tool_calls: false,
+  });
 
   // ── Supervisor node ───────────────────────────────────────────────────────
   async function supervisorNode(state: typeof MessagesAnnotation.State) {
     const stateMessages = state.messages;
     const lastMsg = stateMessages[stateMessages.length - 1];
+
+    console.log(
+      `[supervisor] node called. total msgs=${stateMessages.length}, lastMsg type=${lastMsg?._getType()}, content preview=${typeof lastMsg?.content === "string" ? lastMsg.content.slice(0, 80) : JSON.stringify(lastMsg?.content).slice(0, 80)}`,
+    );
 
     // Only skip the LLM when we're mid-routing cycle (returning from a subagent).
     // A new user turn always ends with a HumanMessage — never skip in that case.
@@ -108,13 +114,20 @@ export async function buildSupervisorGraph(
           .some((m) => m._getType() === "ai");
         if (hasSubagentReply) {
           // Subagent already answered — return without adding another message
+          console.log(`[supervisor] skipping LLM — subagent already replied since last delegation`);
           return { messages: [] };
         }
       }
+      console.log(
+        `[supervisor] not new user turn, lastDelegatedIdx=${lastDelegatedIdx}, proceeding to LLM`,
+      );
     }
 
     const messages = [new SystemMessage(SUPERVISOR_PROMPT(caller)), ...stateMessages];
     const response = await supervisorLLM.invoke(messages);
+    console.log(
+      `[supervisor] LLM response: tool_calls=${JSON.stringify((response as any).tool_calls?.map((tc: any) => tc.name))}, content preview=${typeof response.content === "string" ? response.content.slice(0, 100) : ""}`,
+    );
 
     // When the supervisor makes transfer_to_<agent> tool calls, we must immediately
     // inject a ToolMessage for EVERY tool_call_id so the LLM history stays valid.
@@ -150,6 +163,10 @@ export async function buildSupervisorGraph(
     const messages = state.messages;
     const lastMsg = messages[messages.length - 1];
 
+    console.log(
+      `[routeAfterSupervisor] total msgs=${messages.length}, lastMsg type=${lastMsg?._getType()}, content preview=${typeof lastMsg?.content === "string" ? lastMsg.content.slice(0, 80) : ""}`,
+    );
+
     // Route to a subagent ONLY when the last message is a delegation ack ToolMessage
     // we injected in supervisorNode. This prevents re-routing after a subagent already replied.
     if (
@@ -177,6 +194,7 @@ export async function buildSupervisorGraph(
       ) {
         const subagentName = aiMsg.tool_calls[0].name.replace("transfer_to_", "") as SubagentName;
         if ((SUBAGENT_NAMES as readonly string[]).includes(subagentName)) {
+          console.log(`[routeAfterSupervisor] routing to subagent via ack: ${subagentName}`);
           return subagentName;
         }
       }
@@ -221,6 +239,9 @@ export async function buildSupervisorGraph(
           if (nextTransfer) {
             const nextSubagent = nextTransfer.name.replace("transfer_to_", "") as SubagentName;
             if ((SUBAGENT_NAMES as readonly string[]).includes(nextSubagent)) {
+              console.log(
+                `[routeAfterSupervisor] routing to pending transfer: ${nextSubagent} (${subagentResponseCount}/${ackCount} done)`,
+              );
               return nextSubagent;
             }
           }
@@ -230,6 +251,7 @@ export async function buildSupervisorGraph(
     }
 
     // All transfers processed (or no transfers) → END
+    console.log(`[routeAfterSupervisor] → END`);
     return END;
   }
 
@@ -241,6 +263,8 @@ export async function buildSupervisorGraph(
     recipeGraph,
     shoppingGraph,
     notificationsGraph,
+    inboxGraph,
+    libraryGraph,
   ] = await Promise.all([
     buildCalendarAgent(allTools, householdId, cfg),
     buildFamilyAgent(householdId, cfg),
@@ -248,9 +272,9 @@ export async function buildSupervisorGraph(
     buildRecipeAgent(householdId, cfg),
     buildShoppingAgent(householdId, cfg),
     buildNotificationsAgent(householdId, cfg),
+    buildInboxAgent(allTools, householdId ?? null, cfg, caller),
+    buildLibraryAgent(householdId ?? null, cfg, caller),
   ]);
-  const inboxGraph = buildInboxAgent(allTools, householdId ?? null, cfg, caller);
-  const libraryGraph = buildLibraryAgent(householdId ?? null, cfg, caller);
 
   // ── Assemble the supervisor StateGraph ───────────────────────────────────
   const graph = new StateGraph(MessagesAnnotation)
@@ -262,7 +286,7 @@ export async function buildSupervisorGraph(
     .addNode("reminder", reminderGraph)
     .addNode("recipe", recipeGraph)
     .addNode("shopping", shoppingGraph)
-    .addNode("notifications", notificationsGraph)
+    .addNode("notification", notificationsGraph)
     .addEdge(START, "supervisor")
     .addConditionalEdges("supervisor", routeAfterSupervisor, {
       calendar: "calendar",
@@ -272,7 +296,7 @@ export async function buildSupervisorGraph(
       reminder: "reminder",
       recipe: "recipe",
       shopping: "shopping",
-      notifications: "notifications",
+      notification: "notification",
       [END]: END,
     })
     // After each subagent finishes, return to supervisor
@@ -283,7 +307,7 @@ export async function buildSupervisorGraph(
     .addEdge("reminder", "supervisor")
     .addEdge("recipe", "supervisor")
     .addEdge("shopping", "supervisor")
-    .addEdge("notifications", "supervisor");
+    .addEdge("notification", "supervisor");
 
   return graph.compile({ checkpointer: postgresCheckpointer });
 }

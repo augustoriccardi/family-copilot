@@ -32,7 +32,7 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, toggle, children }) => {
           isOpen ? "flex" : "hidden md:flex"
         }`}
       >
-        <div className="flex h-full w-64 flex-shrink-0 flex-col overflow-hidden p-5">
+        <div className="flex h-full w-64 shrink-0 flex-col overflow-hidden p-5">
           <div className="mb-6 flex items-center justify-between">
             <button
               onClick={toggle}
@@ -43,7 +43,7 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, toggle, children }) => {
             </button>
           </div>
 
-          <div className="flex-grow overflow-y-auto">{children}</div>
+          <div className="grow overflow-y-auto">{children}</div>
         </div>
       </motion.div>
 

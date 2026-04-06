@@ -19,8 +19,11 @@ import { readGmailInboxTool } from "../../tools/inbox/gmail";
 import {
   createProposalTool,
   listPendingProposalsTool,
+  approveProposalTool,
+  rejectProposalTool,
 } from "../../tools/proposals/index";
 import { ProposalType, Prisma } from "@prisma/client";
+import { resolveHouseholdId, findFamilyMemberTool } from "../../tools/family/index";
 
 /** Tool prefixes that belong to specialized agents and should be excluded from the inbox agent */
 const SPECIALIZED_TOOL_PREFIXES = ["google-calendar", "google_calendar", "calendar"];
@@ -133,15 +136,39 @@ function buildInboxTools(householdId: string | null) {
             "Tipo de propuesta: EVENT para eventos o fechas, REMINDER para recordatorios, SHOPPING_ITEM para productos, DOCUMENT para documentos, OTHER para otras",
           ),
         title: z.string().describe("Título claro y conciso de la propuesta"),
-        description: z
+        description: z.string().optional().describe("Descripción adicional de la propuesta"),
+        // EVENT fields
+        startDateTime: z
           .string()
           .optional()
-          .describe("Descripción adicional de la propuesta"),
-        payload: z
-          .record(z.unknown())
           .describe(
-            "Datos estructurados de la propuesta. Para EVENT: { title, startAt, endAt?, location?, memberId? }. Para REMINDER: { title, dueAt, memberId? }. Para SHOPPING_ITEM: { name, quantity?, unit? }.",
+            "REQUERIDO para type=EVENT. Fecha y hora de inicio en formato ISO 8601 (ej: '2026-04-15T18:00:00'). Si no tenés la hora exacta, usá T00:00:00.",
           ),
+        endDateTime: z
+          .string()
+          .optional()
+          .describe(
+            "Fecha y hora de fin en ISO 8601. Para type=EVENT intentá incluirla si está disponible.",
+          ),
+        location: z
+          .string()
+          .optional()
+          .describe("Lugar del evento (para type=EVENT, si está disponible)"),
+        // REMINDER fields
+        dueAt: z
+          .string()
+          .optional()
+          .describe(
+            "REQUERIDO para type=REMINDER. Fecha límite en ISO 8601 (ej: '2026-04-20T09:00:00').",
+          ),
+        // SHOPPING_ITEM fields
+        itemName: z
+          .string()
+          .optional()
+          .describe("Nombre del producto (para type=SHOPPING_ITEM, si difiere del title)"),
+        quantity: z.string().optional().describe("Cantidad del producto (para type=SHOPPING_ITEM)"),
+        unit: z.string().optional().describe("Unidad del producto (para type=SHOPPING_ITEM)"),
+        // Common fields
         source: z
           .string()
           .describe(
@@ -158,21 +185,58 @@ function buildInboxTools(householdId: string | null) {
         memberId: z
           .string()
           .optional()
-          .describe("ID del miembro de la familia al que aplica la propuesta (opcional)"),
+          .describe(
+            "ID del miembro de la familia al que aplica la propuesta — el dueño principal del evento (opcional)",
+          ),
+        participantIds: z
+          .array(z.string())
+          .optional()
+          .describe(
+            "IDs de los miembros que participan/asisten al evento (además del dueño). Usá find_family_member para resolver cada nombre antes de pasar el ID. Solo para type=EVENT.",
+          ),
         notes: z
           .string()
           .optional()
           .describe("Nota interna explicando por qué detectaste esto como relevante"),
+        sourceFileUrl: z
+          .string()
+          .optional()
+          .describe(
+            "URL pública del archivo fuente (imagen, PDF) del que extrajiste esta propuesta. Tomalo del campo `publicUrl` devuelto por analyze_image_content o parse_document.",
+          ),
       }),
-      func: async (args) =>
-        noHousehold
-          ? NO_HOUSEHOLD
-          : JSON.stringify(
-              await createProposalTool(
-                { ...args, type: args.type as ProposalType, payload: args.payload as unknown as Prisma.InputJsonObject },
-                ctx,
-              ),
-            ),
+      func: async (args) => {
+        if (noHousehold) return NO_HOUSEHOLD;
+        // Build payload from flat fields so the LLM doesn't need to construct nested objects
+        const payload: Record<string, unknown> = { title: args.title };
+        if (args.startDateTime) payload.startDateTime = args.startDateTime;
+        if (args.endDateTime) payload.endDateTime = args.endDateTime;
+        if (args.location) payload.location = args.location;
+        if (args.dueAt) payload.dueAt = args.dueAt;
+        if (args.itemName) payload.name = args.itemName;
+        else if (args.type === "SHOPPING_ITEM") payload.name = args.title;
+        if (args.quantity) payload.quantity = args.quantity;
+        if (args.unit) payload.unit = args.unit;
+        if (args.memberId) payload.memberId = args.memberId;
+        if (args.participantIds && args.participantIds.length > 0)
+          payload.participantIds = args.participantIds;
+        return JSON.stringify(
+          await createProposalTool(
+            {
+              type: args.type as ProposalType,
+              title: args.title,
+              description: args.description,
+              payload: payload as unknown as Prisma.InputJsonObject,
+              source: args.source,
+              confidence: args.confidence,
+              memberId: args.memberId,
+              notes: args.notes,
+              sourceFileUrl: args.sourceFileUrl,
+            },
+            ctx,
+          ),
+        );
+      },
     }),
 
     new DynamicStructuredTool({
@@ -180,10 +244,7 @@ function buildInboxTools(householdId: string | null) {
       description:
         "Lista las propuestas pendientes de revisión del hogar. Usá esto cuando el usuario pregunte qué hay pendiente de revisar o aprobar.",
       schema: z.object({
-        memberId: z
-          .string()
-          .optional()
-          .describe("Filtrar por miembro (opcional)"),
+        memberId: z.string().optional().describe("Filtrar por miembro (opcional)"),
         type: z
           .enum(["EVENT", "REMINDER", "SHOPPING_ITEM", "DOCUMENT", "OTHER"])
           .optional()
@@ -199,6 +260,40 @@ function buildInboxTools(householdId: string | null) {
               ),
             ),
     }),
+
+    new DynamicStructuredTool({
+      name: "approve_proposal",
+      description:
+        "Aprueba una propuesta pendiente y crea la entidad correspondiente (evento, recordatorio, item de compra). Usá esto cuando el usuario diga 'aprobar', 'ok', 'dale', 'confirmá' o similar sobre una propuesta específica.",
+      schema: z.object({
+        proposalId: z.string().describe("ID de la propuesta a aprobar"),
+      }),
+      func: async (args) =>
+        noHousehold ? NO_HOUSEHOLD : JSON.stringify(await approveProposalTool(args, ctx)),
+    }),
+
+    new DynamicStructuredTool({
+      name: "reject_proposal",
+      description:
+        "Rechaza una propuesta pendiente sin crear ninguna entidad. Usá esto cuando el usuario diga 'rechazar', 'no', 'cancelar' o similar sobre una propuesta específica.",
+      schema: z.object({
+        proposalId: z.string().describe("ID de la propuesta a rechazar"),
+        reason: z.string().optional().describe("Motivo del rechazo (opcional)"),
+      }),
+      func: async (args) =>
+        noHousehold ? NO_HOUSEHOLD : JSON.stringify(await rejectProposalTool(args, ctx)),
+    }),
+
+    new DynamicStructuredTool({
+      name: "find_family_member",
+      description:
+        "Busca un integrante de la familia por nombre o apodo y devuelve su ID. Usá esto cuando el usuario mencione 'es de [nombre]', 'para [nombre]', 'de pauli', etc. para obtener el memberId antes de crear o aprobar una propuesta.",
+      schema: z.object({
+        nameQuery: z.string().describe("Nombre o apodo del integrante a buscar"),
+      }),
+      func: async (args) =>
+        noHousehold ? NO_HOUSEHOLD : JSON.stringify(await findFamilyMemberTool(args, ctx)),
+    }),
   ];
 }
 
@@ -207,7 +302,7 @@ function buildInboxTools(householdId: string | null) {
  * Handles external source ingestion: images, PDFs, emails, web pages.
  * Produces structured candidates (EventCandidate, ProductIntentItem, etc.) for other agents.
  */
-export function buildInboxAgent(
+export async function buildInboxAgent(
   allTools: StructuredToolInterface[],
   householdId: string | null,
   cfg?: AgentConfigOptions,
@@ -217,8 +312,10 @@ export function buildInboxAgent(
   const modelName = cfg?.model || DEFAULT_MODEL_NAME;
   const llm = createChatModel({ provider, model: modelName, temperature: 1 });
 
+  const resolvedId = await resolveHouseholdId(householdId ?? undefined);
+
   const mcpTools = filterInboxTools(allTools);
-  const inboxTools = [...buildInboxTools(householdId), ...mcpTools];
+  const inboxTools = [...buildInboxTools(resolvedId), ...mcpTools];
 
   return new AgentBuilder({
     llm,

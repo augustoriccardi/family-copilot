@@ -81,7 +81,7 @@ export async function createCalendarEventTool(
     title: string;
     description?: string;
     startDateTime: string;
-    endDateTime: string;
+    endDateTime?: string;
     allDay?: boolean;
     location?: string;
     eventType?: "FAMILY" | "PERSONAL" | "MEDICAL" | "SCHOOL" | "ACTIVITY" | "WORK" | "OTHER";
@@ -216,7 +216,9 @@ export async function createCalendarEventTool(
         description: args.description,
         eventType: args.eventType ?? "FAMILY",
         startsAt: new Date(args.startDateTime),
-        endsAt: new Date(args.endDateTime),
+        endsAt: args.endDateTime
+          ? new Date(args.endDateTime)
+          : new Date(new Date(args.startDateTime).getTime() + 60 * 60 * 1000),
         allDay: args.allDay ?? false,
         location: args.location,
         notes: args.notes,
@@ -453,14 +455,33 @@ export async function updateCalendarEventTool(
     where: { id: args.eventId, householdId: ctx.householdId },
     include: { memberCalendar: true },
   });
-  if (!event) throw new Error("Evento no encontrado");
+  if (!event)
+    return {
+      error: "Evento no encontrado",
+      hint: `El eventId '${args.eventId}' no corresponde a ningún CalendarEvent del hogar. Llamá list_family_events con el rango de fechas aproximado del evento para obtener el id correcto, luego llamá update_family_event con ese id.`,
+    };
+
+  // When only startDateTime is given, preserve the original duration
+  let newStartsAt: Date | undefined;
+  let newEndsAt: Date | undefined;
+  if (args.startDateTime) {
+    newStartsAt = new Date(args.startDateTime);
+    if (args.endDateTime) {
+      newEndsAt = new Date(args.endDateTime);
+    } else {
+      const durationMs = event.endsAt.getTime() - event.startsAt.getTime();
+      newEndsAt = new Date(newStartsAt.getTime() + durationMs);
+    }
+  } else if (args.endDateTime) {
+    newEndsAt = new Date(args.endDateTime);
+  }
 
   const updated = await prisma.calendarEvent.update({
     where: { id: args.eventId },
     data: {
       ...(args.title && { title: args.title }),
-      ...(args.startDateTime && { startsAt: new Date(args.startDateTime) }),
-      ...(args.endDateTime && { endsAt: new Date(args.endDateTime) }),
+      ...(newStartsAt && { startsAt: newStartsAt }),
+      ...(newEndsAt && { endsAt: newEndsAt }),
       ...(args.location !== undefined && { location: args.location }),
       ...(args.notes !== undefined && { notes: args.notes }),
       ...(args.status && { status: args.status }),
@@ -482,8 +503,8 @@ export async function updateCalendarEventTool(
           eventId: event.externalEventId,
           requestBody: {
             ...(args.title && { summary: args.title }),
-            ...(args.startDateTime && { start: { dateTime: args.startDateTime, timeZone: tz } }),
-            ...(args.endDateTime && { end: { dateTime: args.endDateTime, timeZone: tz } }),
+            ...(newStartsAt && { start: { dateTime: newStartsAt.toISOString(), timeZone: tz } }),
+            ...(newEndsAt && { end: { dateTime: newEndsAt.toISOString(), timeZone: tz } }),
             ...(args.location !== undefined && { location: args.location ?? undefined }),
           },
         });
@@ -512,7 +533,11 @@ export async function deleteCalendarEventTool(args: { eventId: string }, ctx: Ag
     where: { id: args.eventId, householdId: ctx.householdId },
     include: { memberCalendar: true },
   });
-  if (!event) throw new Error("Evento no encontrado");
+  if (!event)
+    return {
+      error: "Evento no encontrado",
+      hint: `El eventId '${args.eventId}' no corresponde a ningún CalendarEvent del hogar. Llamá list_family_events con el rango de fechas aproximado del evento para obtener el id correcto, luego llamá delete_family_event con ese id.`,
+    };
 
   await prisma.calendarEvent.delete({ where: { id: args.eventId } });
 

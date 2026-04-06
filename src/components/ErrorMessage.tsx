@@ -10,7 +10,7 @@ interface ErrorMessageProps {
 export const ErrorMessage = ({ message }: ErrorMessageProps) => {
   return (
     <div className="flex gap-3">
-      <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-red-500/10">
+      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-red-500/10">
         <AlertTriangle className="h-5 w-5 text-red-600" />
       </div>
       <div className="max-w-[80%]">

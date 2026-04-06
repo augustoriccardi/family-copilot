@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
+import { approveProposalTool, editAndApproveProposalTool } from "@/lib/tools/proposals/index";
+import { Prisma } from "@prisma/client";
 import prisma from "@/lib/database/prisma";
-import { ProposalStatus, Prisma } from "@prisma/client";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -9,7 +10,7 @@ type RouteParams = { params: Promise<{ id: string }> };
 
 /**
  * POST /api/agent/proposals/[id]/approve
- * Marks a proposal as APPROVED.
+ * Marks a proposal as APPROVED and creates the real entity.
  */
 export async function POST(_req: NextRequest, { params }: RouteParams) {
   const { id } = await params;
@@ -18,30 +19,30 @@ export async function POST(_req: NextRequest, { params }: RouteParams) {
   if (!proposal) {
     return NextResponse.json({ error: "Propuesta no encontrada" }, { status: 404 });
   }
-  if (proposal.status !== ProposalStatus.PENDING) {
-    return NextResponse.json(
-      { error: `La propuesta ya fue ${proposal.status.toLowerCase()}` },
-      { status: 409 },
-    );
+
+  const ctx = { householdId: proposal.householdId };
+  const result = await approveProposalTool({ proposalId: id }, ctx);
+
+  if ("error" in result) {
+    const status = result.error === "Propuesta no encontrada" ? 404 : 409;
+    return NextResponse.json({ error: result.error }, { status });
   }
 
-  const updated = await prisma.actionProposal.update({
-    where: { id },
-    data: { status: ProposalStatus.APPROVED, resolvedAt: new Date() },
-  });
+  if ("entityError" in result && result.entityError) {
+    // Entity creation failed — roll back the proposal to PENDING so the user can fix and retry
+    await prisma.actionProposal.update({
+      where: { id },
+      data: { status: "PENDING", resolvedAt: null },
+    });
+    return NextResponse.json({ error: result.entityError }, { status: 422 });
+  }
 
-  return NextResponse.json({
-    id: updated.id,
-    title: updated.title,
-    type: updated.type,
-    status: updated.status,
-    payload: updated.payload,
-  });
+  return NextResponse.json(result);
 }
 
 /**
  * PUT /api/agent/proposals/[id]/approve
- * Edit payload/title then approve in one step.
+ * Edit payload/title then approve in one step, then creates the real entity.
  */
 export async function PUT(req: NextRequest, { params }: RouteParams) {
   const { id } = await params;
@@ -51,32 +52,23 @@ export async function PUT(req: NextRequest, { params }: RouteParams) {
   if (!proposal) {
     return NextResponse.json({ error: "Propuesta no encontrada" }, { status: 404 });
   }
-  if (proposal.status !== ProposalStatus.PENDING) {
-    return NextResponse.json(
-      { error: `La propuesta ya fue ${proposal.status.toLowerCase()}` },
-      { status: 409 },
-    );
+
+  const ctx = { householdId: proposal.householdId };
+  const result = await editAndApproveProposalTool(
+    {
+      proposalId: id,
+      title: body.title,
+      description: body.description,
+      payload: body.payload as Prisma.InputJsonObject | undefined,
+      memberId: body.memberId,
+    },
+    ctx,
+  );
+
+  if ("error" in result) {
+    const status = result.error === "Propuesta no encontrada" ? 404 : 409;
+    return NextResponse.json({ error: result.error }, { status });
   }
 
-  const updateData: Prisma.ActionProposalUpdateInput = {
-    status: ProposalStatus.EDITED,
-    resolvedAt: new Date(),
-  };
-  if (body.title !== undefined) updateData.title = body.title;
-  if (body.description !== undefined) updateData.description = body.description;
-  if (body.payload !== undefined) updateData.payload = body.payload as Prisma.InputJsonObject;
-  if (body.memberId !== undefined) updateData.member = { connect: { id: body.memberId } };
-
-  const updated = await prisma.actionProposal.update({
-    where: { id },
-    data: updateData,
-  });
-
-  return NextResponse.json({
-    id: updated.id,
-    title: updated.title,
-    type: updated.type,
-    status: updated.status,
-    payload: updated.payload,
-  });
+  return NextResponse.json(result);
 }

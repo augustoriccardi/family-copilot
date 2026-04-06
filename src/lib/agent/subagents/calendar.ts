@@ -24,6 +24,7 @@ import {
   checkConflictsTool,
   confirmEventCandidateTool,
 } from "../../tools/calendar/index";
+import { createProposalTool, approveProposalTool } from "../../tools/proposals/index";
 import prisma from "../../database/prisma";
 
 /** MCP server name prefixes that belong to the calendar domain */
@@ -156,7 +157,7 @@ function buildPrismaCalendarTools(householdId: string | null, callerId?: string)
     new DynamicStructuredTool({
       name: "update_family_event",
       description:
-        "Actualiza un evento existente. El sync con Google Calendar ocurre automáticamente.",
+        "Actualiza un evento existente. El eventId DEBE ser el id retornado por list_family_events o create_family_event — NUNCA un ID de propuesta. El sync con Google Calendar ocurre automáticamente.",
       schema: z.object({
         eventId: z.string().describe("ID del evento a actualizar"),
         title: z.string().optional(),
@@ -235,6 +236,86 @@ function buildPrismaCalendarTools(householdId: string | null, callerId?: string)
               "Este integrante no tiene calendarios externos configurados. El evento se guardará solo en la app.",
           });
         return JSON.stringify({ memberId: resolvedMemberId, calendars });
+      },
+    }),
+
+    new DynamicStructuredTool({
+      name: "approve_proposal",
+      description:
+        "Aprueba una propuesta de evento creada por el agente inbox y crea el evento directamente en el calendario. Usá esto cuando el agente inbox acaba de crear una propuesta y el usuario quería agendar directamente (dijo 'agenda esto', 'ponelo', 'agendalo'). Pasá el proposalId retornado por inbox.",
+      schema: z.object({
+        proposalId: z.string().describe("ID de la propuesta a aprobar (retornado por inbox)"),
+      }),
+      func: async (args) => {
+        if (noHousehold) return NO_HOUSEHOLD;
+        const result = await approveProposalTool(args, ctx);
+        return JSON.stringify(result);
+      },
+    }),
+
+    new DynamicStructuredTool({
+      name: "create_event_proposal",
+      description:
+        "Crea una PROPUESTA de evento en vez de crearlo directamente. Usá esto cuando la confianza es baja: el usuario no especificó datos clave (fecha exacta, hora, participantes), los datos son ambiguos, inferidos o provienen de una fuente no explícita. La propuesta queda pendiente para que el usuario la revise y apruebe. Para eventos con datos completos y solicitud explícita, preferí create_family_event.",
+      schema: z.object({
+        title: z.string().describe("Título del evento"),
+        description: z.string().optional().describe("Descripción resumida del evento"),
+        startDateTime: z.string().describe("Fecha y hora de inicio estimada en ISO 8601"),
+        endDateTime: z.string().optional().describe("Fecha y hora de fin estimada en ISO 8601"),
+        allDay: z.boolean().optional(),
+        location: z.string().optional(),
+        eventType: z
+          .enum(["FAMILY", "PERSONAL", "MEDICAL", "SCHOOL", "ACTIVITY", "WORK", "OTHER"])
+          .optional(),
+        memberId: z.string().optional().describe("ID del beneficiario principal"),
+        responsibleMemberId: z.string().optional(),
+        participantIds: z.array(z.string()).optional(),
+        notes: z.string().optional(),
+        confidence: z
+          .number()
+          .min(0)
+          .max(1)
+          .optional()
+          .describe(
+            "Tu nivel de confianza en los datos del evento (0–1). Ej: 0.5 si la fecha es ambigua",
+          ),
+        reason: z
+          .string()
+          .optional()
+          .describe("Motivo por el que creás propuesta en lugar de evento directo"),
+      }),
+      func: async (args) => {
+        if (noHousehold) return NO_HOUSEHOLD;
+        const result = await createProposalTool(
+          {
+            type: "EVENT",
+            title: args.title,
+            description: args.description,
+            payload: {
+              startDateTime: args.startDateTime,
+              endDateTime: args.endDateTime ?? null,
+              allDay: args.allDay ?? false,
+              location: args.location ?? null,
+              eventType: args.eventType ?? "OTHER",
+              memberId: args.memberId ?? null,
+              responsibleMemberId: args.responsibleMemberId ?? null,
+              participantIds: args.participantIds ?? [],
+              notes: args.notes ?? null,
+            },
+            source: "manual",
+            confidence: args.confidence ?? 0.6,
+            memberId: args.memberId,
+            notes: args.reason
+              ? `[Propuesta creada por agente — ${args.reason}] ${args.notes ?? ""}`
+              : args.notes,
+          },
+          ctx,
+        );
+        return JSON.stringify({
+          ...result,
+          message:
+            "Propuesta creada. El usuario puede revisarla y aprobarla desde el panel de propuestas.",
+        });
       },
     }),
 

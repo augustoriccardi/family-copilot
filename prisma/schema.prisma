@@ -446,6 +446,7 @@ model CalendarEvent {
   memberCalendar MemberCalendar?            @relation(fields: [memberCalendarId], references: [id], onDelete: SetNull)
   reminders      Reminder[]
   participants   CalendarEventParticipant[]
+  proposals      ActionProposal[]           @relation("ProposalToEvent")
 
   @@map("calendar_events")
 }
@@ -687,29 +688,34 @@ enum ProposalStatus {
 // Una propuesta generada por inbox (email, imagen, PDF, WhatsApp) que espera
 // la revisión del usuario antes de convertirse en una entidad real.
 model ActionProposal {
-  id          String         @id @default(cuid())
-  householdId String         @map("household_id")
+  id              String         @id @default(cuid())
+  householdId     String         @map("household_id")
   // Miembro al que aplica la propuesta (null = toda la familia)
-  memberId    String?        @map("member_id")
-  type        ProposalType
-  status      ProposalStatus @default(PENDING)
-  title       String
-  description String?
+  memberId        String?        @map("member_id")
+  type            ProposalType
+  status          ProposalStatus @default(PENDING)
+  title           String
+  description     String?
   // Payload estructurado: EventCandidate, ProductIntentItem, etc.
-  payload     Json           @db.JsonB
+  payload         Json           @db.JsonB
   // Origen del evento: "email" | "pdf" | "image" | "whatsapp" | "web" | "manual"
-  source      String
+  source          String
   // Nivel de confianza del agente al extraer (0.0–1.0)
-  confidence  Float          @default(0.0)
+  confidence      Float          @default(0.0)
   // Por qué el agente lo detectó como relevante
-  notes       String?
+  notes           String?
+  // URL pública del archivo fuente (imagen, PDF) que originó esta propuesta
+  sourceFileUrl   String?        @map("source_file_url")
+  // CalendarEvent creado al aprobar esta propuesta (trazabilidad de origen)
+  calendarEventId String?        @map("calendar_event_id")
   // Cuándo fue revisado (aprobado o rechazado)
-  resolvedAt  DateTime?      @map("resolved_at")
-  createdAt   DateTime       @default(now()) @map("created_at")
-  updatedAt   DateTime       @updatedAt @map("updated_at")
+  resolvedAt      DateTime?      @map("resolved_at")
+  createdAt       DateTime       @default(now()) @map("created_at")
+  updatedAt       DateTime       @updatedAt @map("updated_at")
 
-  household Household     @relation(fields: [householdId], references: [id], onDelete: Cascade)
-  member    FamilyMember? @relation(fields: [memberId], references: [id], onDelete: SetNull)
+  household     Household      @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  member        FamilyMember?  @relation(fields: [memberId], references: [id], onDelete: SetNull)
+  calendarEvent CalendarEvent? @relation("ProposalToEvent", fields: [calendarEventId], references: [id], onDelete: SetNull)
 
   @@index([householdId, status])
   @@map("action_proposals")
