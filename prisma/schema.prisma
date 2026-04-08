@@ -15,6 +15,8 @@ model Thread {
   title       String
   householdId String?
   household   Household? @relation(fields: [householdId], references: [id])
+  userId      String?    @map("user_id")
+  user        User?      @relation(fields: [userId], references: [id])
   createdAt   DateTime   @default(now())
   updatedAt   DateTime   @updatedAt
 
@@ -71,17 +73,72 @@ enum MCPServerType {
 // Usuario real autenticado en la app (adulto con cuenta propia).
 // Los menores son FamilyMember con linkedUserId = null.
 model User {
-  id        String   @id @default(cuid())
-  name      String
-  email     String   @unique
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
+  id            String    @id @default(cuid())
+  name          String?
+  email         String    @unique
+  emailVerified DateTime? @map("email_verified")
+  image         String?
+  password      String? // bcrypt hash; null for OAuth-only users
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
 
+  accounts            Account[]
+  sessions            Session[]
   households          Household[]
   linkedMemberships   FamilyMember[]
   calendarConnections CalendarConnection[]
+  threads             Thread[]
+  sentInvitations     Invitation[]         @relation("InvitationSender")
 
   @@map("users")
+}
+
+// ──────────────────────────────────────────────
+// AUTH.JS — OAuth accounts, sessions, tokens
+// ──────────────────────────────────────────────
+
+model Account {
+  id                String   @id @default(cuid())
+  userId            String   @map("user_id")
+  type              String
+  provider          String
+  providerAccountId String   @map("provider_account_id")
+  refresh_token     String?  @db.Text
+  access_token      String?  @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?  @db.Text
+  session_state     String?
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@map("accounts")
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique @map("session_token")
+  userId       String   @map("user_id")
+  expires      DateTime
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("sessions")
+}
+
+model VerificationToken {
+  identifier String
+  token      String
+  expires    DateTime
+
+  @@unique([identifier, token])
+  @@map("verification_tokens")
 }
 
 // ──────────────────────────────────────────────
@@ -113,6 +170,8 @@ model Household {
   permissions        HouseholdPermission[]
   documents          Document[]
   proposals          ActionProposal[]
+  automationOutbox   AutomationOutbox[]
+  watchedSources     WatchedSource[]
 
   @@map("households")
 }
@@ -147,11 +206,13 @@ model FamilyMember {
   color         String?
   notes         String?
   whatsappPhone String?    @map("whatsapp_phone")
+  email         String?    @map("email")
   createdAt     DateTime   @default(now()) @map("created_at")
   updatedAt     DateTime   @updatedAt @map("updated_at")
 
   linkedUser          User?                      @relation(fields: [linkedUserId], references: [id], onDelete: SetNull)
   household           Household                  @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  invitations         Invitation[]
   constraints         FamilyConstraint[]
   ownedEvents         CalendarEvent[]            @relation("EventOwner")
   responsibleFor      CalendarEvent[]            @relation("EventResponsible")
@@ -164,8 +225,29 @@ model FamilyMember {
   targetPermissions   HouseholdPermission[]      @relation("PermissionTarget")
   documents           Document[]
   proposals           ActionProposal[]
+  watchedSources      WatchedSource[]
 
   @@map("family_members")
+}
+
+// ──────────────────────────────────────────────
+// INVITACIONES
+// ──────────────────────────────────────────────
+
+model Invitation {
+  id          String    @id @default(cuid())
+  token       String    @unique @default(cuid())
+  email       String
+  memberId    String    @map("member_id")
+  invitedById String    @map("invited_by_id")
+  expiresAt   DateTime  @map("expires_at")
+  acceptedAt  DateTime? @map("accepted_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  member    FamilyMember @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  invitedBy User         @relation("InvitationSender", fields: [invitedById], references: [id], onDelete: Cascade)
+
+  @@map("invitations")
 }
 
 // ──────────────────────────────────────────────
@@ -180,6 +262,10 @@ model HouseholdPreferences {
   shoppingDay          String?  @map("shopping_day")
   mealStyle            String?  @map("meal_style")
   dietRules            Json?    @map("diet_rules") @db.JsonB
+  // AI model config per household
+  aiProvider           String?  @map("ai_provider")
+  aiModel              String?  @map("ai_model")
+  aiApiKey             String?  @map("ai_api_key")
   createdAt            DateTime @default(now()) @map("created_at")
   updatedAt            DateTime @updatedAt @map("updated_at")
 
@@ -405,9 +491,6 @@ enum RsvpStatus {
 enum MemberCalendarType {
   PERSONAL // Calendario personal (ej: "primary" en Google)
   FAMILY_SHARED // Calendario familiar compartido del hogar
-  WORK // Laboral
-  SCHOOL // Escolar
-  OTHER
 }
 
 model CalendarEvent {
@@ -719,4 +802,73 @@ model ActionProposal {
 
   @@index([householdId, status])
   @@map("action_proposals")
+}
+
+// ──────────────────────────────────────────────
+// AUTOMATIZACIÓN — OUTBOX TRANSACCIONAL
+// ──────────────────────────────────────────────
+
+// Cola transaccional de eventos de dominio.
+// Los eventos se escriben en la misma transacción que la acción principal;
+// un cron-pump los procesa con SELECT FOR UPDATE SKIP LOCKED.
+enum OutboxStatus {
+  PENDING
+  PROCESSING
+  DONE
+  FAILED
+}
+
+model AutomationOutbox {
+  id          String       @id @default(cuid())
+  householdId String       @map("household_id")
+  // Tipo de evento: "proposal.approved" | "event.created" | "reminder.due" | "inbox.email_received" | etc.
+  type        String
+  // Payload estructurado según el tipo de evento
+  payload     Json         @db.JsonB
+  // Origen: "agent" | "cron" | "webhook" | "poller"
+  source      String
+  status      OutboxStatus @default(PENDING)
+  attempts    Int          @default(0)
+  lastError   String?      @map("last_error")
+  // Permite scheduling y retry con backoff exponencial
+  processAt   DateTime     @default(now()) @map("process_at")
+  createdAt   DateTime     @default(now()) @map("created_at")
+  processedAt DateTime?    @map("processed_at")
+
+  household Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+
+  @@index([status, processAt])
+  @@map("automation_outbox")
+}
+
+// Fuentes externas que el sistema monitorea proactivamente.
+// Cada entrada define qué label de Gmail o qué URL vigilar, para quién.
+enum WatchedSourceType {
+  GMAIL_LABEL
+  WEBPAGE
+  RSS
+}
+
+model WatchedSource {
+  id            String            @id @default(cuid())
+  householdId   String            @map("household_id")
+  type          WatchedSourceType
+  // Nombre descriptivo: "Colegio San Martín — web"
+  name          String
+  // { label: "family-copilot" } para GMAIL_LABEL
+  // { url: "...", cssSelector: "..." } para WEBPAGE
+  config        Json              @db.JsonB
+  // Para quién es esta fuente (Violeta, Pauli, etc.)
+  memberId      String?           @map("member_id")
+  enabled       Boolean           @default(true)
+  lastCheckedAt DateTime?         @map("last_checked_at")
+  // Último emailId o URL hash procesado (evita reprocesar)
+  lastItemId    String?           @map("last_item_id")
+  createdAt     DateTime          @default(now()) @map("created_at")
+
+  household Household     @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  member    FamilyMember? @relation(fields: [memberId], references: [id], onDelete: SetNull)
+
+  @@index([householdId, type])
+  @@map("watched_sources")
 }

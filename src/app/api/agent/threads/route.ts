@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import type { Thread } from "@/types/message";
 import prisma from "@/lib/database/prisma";
+import { auth } from "@/auth";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -11,8 +12,21 @@ type ThreadEntity = {
   createdAt: Date;
   updatedAt: Date;
 };
-export async function GET() {
-  const dbThreads = await prisma.thread.findMany({ orderBy: { updatedAt: "desc" }, take: 50 });
+
+/** auth() reads the session from next/headers — the correct v5 approach for route handlers. */
+async function getUserId(): Promise<string | null> {
+  const session = await auth();
+  return session?.user?.id ?? null;
+}
+
+export async function GET(req: NextRequest) {
+  const userId = await getUserId();
+  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const dbThreads = await prisma.thread.findMany({
+    where: { userId },
+    orderBy: { updatedAt: "desc" },
+    take: 50,
+  });
   const threads: Thread[] = dbThreads.map((t: ThreadEntity) => ({
     id: t.id,
     title: t.title,
@@ -22,8 +36,10 @@ export async function GET() {
   return NextResponse.json(threads, { status: 200 });
 }
 
-export async function POST() {
-  const created = await prisma.thread.create({ data: { title: "New thread" } });
+export async function POST(req: NextRequest) {
+  const userId = await getUserId();
+  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const created = await prisma.thread.create({ data: { title: "New thread", userId } });
   const thread: Thread = {
     id: created.id,
     title: created.title,
@@ -34,6 +50,8 @@ export async function POST() {
 }
 
 export async function PATCH(req: NextRequest) {
+  const userId = await getUserId();
+  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   try {
     const body = await req.json();
     const { id, title } = body || {};
@@ -50,35 +68,28 @@ export async function PATCH(req: NextRequest) {
       },
       { status: 200 },
     );
-  } catch (e: unknown) {
+  } catch (e) {
     const message = e instanceof Error ? e.message : "Update failed";
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }
 
 export async function DELETE(req: NextRequest) {
+  const userId = await getUserId();
+  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   try {
     const body = await req.json();
     const { id } = body || {};
     if (!id || typeof id !== "string") {
       return NextResponse.json({ error: "Thread id required" }, { status: 400 });
     }
-
-    // First check if thread exists
     const thread = await prisma.thread.findUnique({ where: { id } });
     if (!thread) {
       return NextResponse.json({ error: "Thread not found" }, { status: 404 });
     }
-
-    // Delete the thread from Prisma (metadata)
     await prisma.thread.delete({ where: { id } });
-
-    // Note: LangGraph checkpoint data will become orphaned but won't affect functionality
-    // The checkpointer will simply not find any thread metadata for this thread_id
-    // Future versions could implement direct checkpoint deletion via SQL if needed
-
     return NextResponse.json({ success: true }, { status: 200 });
-  } catch (e: unknown) {
+  } catch (e) {
     const message = e instanceof Error ? e.message : "Delete failed";
     return NextResponse.json({ error: message }, { status: 500 });
   }

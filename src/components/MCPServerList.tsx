@@ -269,7 +269,7 @@ export function MCPServerList({ isOpen, onClose }: MCPServerListProps) {
                           onChange={(e) => toggleServer(server.id, e.target.checked)}
                           className="peer sr-only"
                         />
-                        <div className="peer peer-checked:bg-primary peer-focus:ring-ring/40 h-5 w-9 rounded-full bg-gray-200 peer-focus:ring-4 peer-focus:outline-none after:absolute after:top-[2px] after:left-[2px] after:h-4 after:w-4 after:rounded-full after:border after:border-gray-300 after:bg-white after:transition-all after:content-[''] peer-checked:after:translate-x-full peer-checked:after:border-white"></div>
+                        <div className="peer peer-checked:bg-primary peer-focus:ring-ring/40 h-5 w-9 rounded-full bg-gray-200 peer-focus:ring-4 peer-focus:outline-none after:absolute after:top-0.5 after:left-0.5 after:h-4 after:w-4 after:rounded-full after:border after:border-gray-300 after:bg-white after:transition-all after:content-[''] peer-checked:after:translate-x-full peer-checked:after:border-white"></div>
                       </label>
 
                       <button

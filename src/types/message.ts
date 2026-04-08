@@ -15,6 +15,8 @@ export interface FileAttachment {
 
 export interface MessageOptions {
   model?: string;
+  provider?: string; // 'google' | 'openai'
+  apiKey?: string; // household API key override
   tools?: string[];
   allowTool?: "allow" | "deny";
   approveAllTools?: boolean; // if true, skip tool approval prompts

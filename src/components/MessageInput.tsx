@@ -22,13 +22,13 @@ export const MessageInput = ({
   const [message, setMessage] = useState("");
   const [isFocused, setIsFocused] = useState(false);
   const [provider, setProvider] = useState<string>("openai");
-  const [model, setModel] = useState<string>("gpt-4o-mini");
+  const [model, setModel] = useState<string>("gpt-4o-mini-2024-07-18");
   const [settingsExpanded, setSettingsExpanded] = useState<boolean>(false);
   const [attachments, setAttachments] = useState<FileAttachment[]>([]);
   const [isUploading, setIsUploading] = useState(false);
 
   // UI settings for toggling tool messages
-  const { hideToolMessages, toggleToolMessages, caller, approveAllTools, setApproveAllTools } =
+  const { hideToolMessages, toggleToolMessages, approveAllTools, setApproveAllTools } =
     useUISettings();
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -111,12 +111,10 @@ export const MessageInput = ({
 
     await onSendMessage(message, {
       model,
+      provider,
       tools: [],
       approveAllTools: approveAllTools,
       attachments: attachments.length > 0 ? attachments : undefined,
-      callerId: caller?.callerId,
-      callerName: caller?.callerName,
-      callerRole: caller?.callerRole,
     });
     setMessage("");
     setAttachments([]);
@@ -149,7 +147,7 @@ export const MessageInput = ({
                 key={attachment.key}
                 className="flex items-center gap-2 rounded-md bg-gray-100 px-3 py-1.5 text-sm dark:bg-gray-800"
               >
-                <span className="max-w-[200px] truncate">{attachment.name}</span>
+                <span className="max-w-30 truncate">{attachment.name}</span>
                 <span className="text-xs text-gray-500">
                   ({attachment.size < 1024 ? "<1KB" : `${(attachment.size / 1024).toFixed(0)}KB`})
                 </span>
@@ -173,7 +171,7 @@ export const MessageInput = ({
           onFocus={() => setIsFocused(true)}
           onBlur={() => setIsFocused(false)}
           placeholder={"Type your message..."}
-          className="max-h-[200px] min-h-[60px] w-full flex-1 resize-none overflow-auto p-4 pr-12 focus:outline-none"
+          className="max-h-15 min-h-15 w-full flex-1 resize-none overflow-auto p-4 pr-12 focus:outline-none"
           rows={1}
           aria-label="Message input"
           disabled={isLoading}

@@ -6,23 +6,27 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 /**
- * GET /api/google/callback?code=xxx&state=memberId
+ * GET /api/google/callback?code=xxx&state=<userId|memberId>
  *
- * Receives the authorization code from Google, exchanges it for tokens,
- * and stores them in CalendarConnection for the family member (state param).
+ * Handles Google OAuth callback. The `state` param can be:
+ *   - A User.id (cuid, sent by /api/google/connect when user is authenticated)
+ *   - A FamilyMember.id (legacy — sent by the old manual connect flow)
+ *
+ * In both cases we upsert a CalendarConnection and link it to as many
+ * identifiers as possible (userId + memberId).
  */
 export async function GET(request: NextRequest): Promise<NextResponse> {
   const { searchParams } = new URL(request.url);
   const code = searchParams.get("code");
   const error = searchParams.get("error");
-  const memberId = searchParams.get("state");
+  const state = searchParams.get("state");
   const appUrl = getAppUrl();
 
   if (error) {
     return NextResponse.redirect(new URL(`/?google_error=${encodeURIComponent(error)}`, appUrl));
   }
 
-  if (!code || !memberId) {
+  if (!code || !state) {
     return NextResponse.redirect(new URL("/?google_error=missing_params", appUrl));
   }
 
@@ -67,33 +71,58 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     // non-fatal
   }
 
-  // Upsert CalendarConnection for this member
-  await prisma.calendarConnection.upsert({
-    where: {
-      // Use a unique constraint on memberId + provider — need to find existing or create
-      id:
-        (
-          await prisma.calendarConnection.findFirst({
-            where: { memberId, provider: "google" },
-            select: { id: true },
-          })
-        )?.id ?? "new",
-    },
-    update: {
-      accessToken: tokens.access_token,
-      refreshToken: tokens.refresh_token ?? undefined,
-      expiresAt: tokens.expires_in ? new Date(Date.now() + tokens.expires_in * 1000) : null,
-      providerEmail,
-    },
-    create: {
-      memberId,
-      provider: "google",
-      providerEmail,
-      accessToken: tokens.access_token,
-      refreshToken: tokens.refresh_token,
-      expiresAt: tokens.expires_in ? new Date(Date.now() + tokens.expires_in * 1000) : null,
-    },
-  });
+  const tokenData = {
+    accessToken: tokens.access_token as string,
+    refreshToken: (tokens.refresh_token as string | undefined) ?? null,
+    expiresAt: tokens.expires_in
+      ? new Date(Date.now() + (tokens.expires_in as number) * 1000)
+      : null,
+    providerEmail,
+  };
+
+  // Resolve whether `state` is a userId or memberId
+  const user = await prisma.user.findUnique({ where: { id: state }, select: { id: true } });
+
+  if (user) {
+    // state = userId — new flow
+    const linkedMember = await prisma.familyMember.findFirst({
+      where: { linkedUserId: user.id },
+      select: { id: true },
+    });
+    const existing = await prisma.calendarConnection.findFirst({
+      where: { userId: user.id, provider: "google" },
+      select: { id: true },
+    });
+    if (existing) {
+      await prisma.calendarConnection.update({
+        where: { id: existing.id },
+        data: { ...tokenData, ...(linkedMember ? { memberId: linkedMember.id } : {}) },
+      });
+    } else {
+      await prisma.calendarConnection.create({
+        data: {
+          userId: user.id,
+          provider: "google",
+          ...tokenData,
+          memberId: linkedMember?.id ?? null,
+        },
+      });
+    }
+  } else {
+    // state = memberId — legacy flow
+    const memberId = state;
+    const existing = await prisma.calendarConnection.findFirst({
+      where: { memberId, provider: "google" },
+      select: { id: true },
+    });
+    if (existing) {
+      await prisma.calendarConnection.update({ where: { id: existing.id }, data: tokenData });
+    } else {
+      await prisma.calendarConnection.create({
+        data: { memberId, provider: "google", ...tokenData },
+      });
+    }
+  }
 
   return NextResponse.redirect(new URL("/?google_connected=1", appUrl));
 }

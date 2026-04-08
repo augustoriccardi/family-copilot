@@ -25,7 +25,7 @@ function AgentAvatar({ src, agentName }: { src: string; agentName: string }) {
   if (errored) {
     return (
       <div className="flex h-full w-full items-center justify-center">
-        <Bot className="text-primary h-5 w-5" />
+        <Bot className="text-primary h-6 w-6" />
       </div>
     );
   }
@@ -69,12 +69,12 @@ export const AIMessage = ({
 
   return (
     <div className="flex gap-3">
-      <div className="bg-primary/10 relative h-10 w-10 shrink-0 self-start overflow-hidden rounded-full">
+      <div className="bg-primary/10 relative h-12 w-12 shrink-0 self-start overflow-hidden rounded-full">
         {avatarSrc ? (
           <AgentAvatar src={avatarSrc} agentName={message.agentName ?? "agent"} />
         ) : (
           <div className="flex h-full w-full items-center justify-center">
-            <Bot className="text-primary h-5 w-5" />
+            <Bot className="text-primary h-6 w-6" />
           </div>
         )}
       </div>

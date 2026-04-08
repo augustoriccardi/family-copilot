@@ -34,6 +34,7 @@
 
 import { NextRequest } from "next/server";
 import prisma from "@/lib/database/prisma";
+import { auth } from "@/auth";
 
 export interface WebIdentity {
   householdId: string | undefined;
@@ -43,11 +44,23 @@ export interface WebIdentity {
 }
 
 export async function resolveWebIdentity(req: NextRequest, threadId: string): Promise<WebIdentity> {
-  // ── TODO: replace this block with getServerSession() when auth is added ──
-  const { searchParams } = new URL(req.url);
-  const callerId = searchParams.get("callerId") || undefined;
-  const callerName = searchParams.get("callerName") || undefined;
-  const callerRole = searchParams.get("callerRole") || undefined;
+  // ── Resolve identity from Auth.js session ─────────────────────────────────
+  const session = await auth();
+  let callerId: string | undefined;
+  let callerName: string | undefined;
+  let callerRole: string | undefined;
+
+  if (session?.user?.id) {
+    const member = await prisma.familyMember.findFirst({
+      where: { linkedUserId: session.user.id },
+      select: { id: true, name: true, role: true, householdId: true },
+    });
+    if (member) {
+      callerId = member.id;
+      callerName = member.name;
+      callerRole = member.role;
+    }
+  }
   // ─────────────────────────────────────────────────────────────────────────
 
   // Household lookup: from thread, or fallback to first household (single-family setup)

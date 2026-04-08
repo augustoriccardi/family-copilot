@@ -164,7 +164,7 @@ export function buildLibraryAgent(
 ) {
   const provider = cfg?.provider || DEFAULT_MODEL_PROVIDER;
   const modelName = cfg?.model || DEFAULT_MODEL_NAME;
-  const llm = createChatModel({ provider, model: modelName, temperature: 1 });
+  const llm = createChatModel({ provider, model: modelName, temperature: 1, apiKey: cfg?.apiKey });
 
   const libraryTools = buildLibraryTools(householdId);
 

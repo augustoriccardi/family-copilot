@@ -43,6 +43,7 @@ export function createMessageStream(
 ): EventSource {
   const params = new URLSearchParams({ content: message, threadId });
   if (opts?.model) params.set("model", opts.model);
+  if (opts?.provider) params.set("provider", opts.provider);
   if (opts?.tools?.length) params.set("tools", opts.tools.join(","));
   if (opts?.allowTool) params.set("allowTool", opts.allowTool);
   if (opts?.approveAllTools !== undefined)
@@ -51,9 +52,6 @@ export function createMessageStream(
     // Serialize attachments as JSON string for query parameter
     params.set("attachments", JSON.stringify(opts.attachments));
   }
-  if (opts?.callerId) params.set("callerId", opts.callerId);
-  if (opts?.callerName) params.set("callerName", opts.callerName);
-  if (opts?.callerRole) params.set("callerRole", opts.callerRole);
   return new EventSource(`${getUrl("stream")}?${params}`);
 }
 

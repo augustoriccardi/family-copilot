@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { CheckCircle, XCircle, Inbox, ChevronDown, ChevronUp, Clock } from "lucide-react";
-import { useUISettings } from "@/contexts/UISettingsContext";
 
 type ProposalType = "EVENT" | "REMINDER" | "SHOPPING_ITEM" | "DOCUMENT" | "OTHER";
 
@@ -60,8 +59,6 @@ export function ProposalInbox({ threadId }: { threadId?: string }) {
   const [isExpanded, setIsExpanded] = useState(false);
   const [loading, setLoading] = useState(false);
   const [actioning, setActioning] = useState<string | null>(null);
-  const { caller } = useUISettings();
-
   const fetchProposals = useCallback(async () => {
     setLoading(true);
     try {

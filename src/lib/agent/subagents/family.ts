@@ -217,12 +217,21 @@ export async function buildFamilyAgent(householdId?: string, cfg?: AgentConfigOp
   const resolvedId = await resolveHouseholdId(householdId);
   const provider = cfg?.provider || DEFAULT_MODEL_PROVIDER;
   const modelName = cfg?.model || DEFAULT_MODEL_NAME;
-  const llm = createChatModel({ provider, model: modelName, temperature: 1 });
+  const llm = createChatModel({
+    provider,
+    model: modelName,
+    temperature: 0.3,
+    apiKey: cfg?.apiKey,
+  });
+
+  const caller = cfg?.callerName
+    ? { callerId: cfg.callerId, callerName: cfg.callerName, callerRole: cfg.callerRole }
+    : undefined;
 
   return new AgentBuilder({
     llm,
     tools: buildFamilyTools(resolvedId),
-    prompt: FAMILY_AGENT_PROMPT(),
+    prompt: FAMILY_AGENT_PROMPT(caller),
     checkpointer: postgresCheckpointer,
     approveAllTools: true, // Subagents always auto-approve — interrupt flow breaks in nested graphs
   }).build();

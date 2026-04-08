@@ -137,6 +137,61 @@ pnpm dev
 
 Visit [http://localhost:3000](http://localhost:3000) to start chatting with your AI agent!
 
+## User Onboarding
+
+This section is for **families using the app**, not developers setting it up.
+
+### Step 1 — Create an account
+
+Go to `/register` and sign up with your email and password, or use **Sign in with Google**.
+
+### Step 2 — Create your household
+
+On first login, you'll be prompted to create a household. Give it a name (e.g. "Familia García") and set your timezone and currency. The account that creates the household becomes the **owner**.
+
+### Step 3 — Add family members
+
+In **Settings → Family**, add each person in your household:
+
+- Fill in their name and role (Padre, Madre, Hijo, Hija, etc.)
+- Mark children as minors with the _Es menor_ toggle
+- Each member gets their own profile — you can add a WhatsApp number for notifications
+
+### Step 4 — Invite members to log in (optional)
+
+Members are data by default (they appear in events, reminders, etc.). If a member wants to log in themselves:
+
+1. In **Settings → Family**, click _Invitar_ next to the member
+2. Enter their email address — an invitation link is sent
+3. They register (or log in) at that email and click the link
+4. They're now linked to their family profile
+
+> Children are typically managed by the parent — you don't need to invite them unless they'll use the app themselves.
+
+### Step 5 — Configure the AI model (owner only)
+
+In **Settings → AI Model** (visible only to the household owner):
+
+1. Choose your provider: **Google** or **OpenAI**
+2. Select a model
+3. Enter your API key and click **Guardar**
+
+The key is stored securely per household and used for all family conversations.
+
+### Step 6 — Connect Google Calendar (optional)
+
+In **Settings → Google Calendar**, connect your Google account to sync events automatically. Each family member can link their own calendar.
+
+### Step 7 — Start chatting
+
+Open a conversation and talk naturally:
+
+> _"Agenda dentista mañana a las 10 para Pilar"_  
+> _"¿Qué tiene Mateo esta semana?"_  
+> _"Agregá leche y huevos a la lista de compras"_
+
+The agent proposes actions — you confirm before anything is saved. Pending proposals appear in the **Inbox** panel.
+
 ## Screenshots
 
 <table>
@@ -287,6 +342,37 @@ erDiagram
         string id PK
         string name
         string email
+        string image
+        string password
+        datetime emailVerified
+    }
+    Account {
+        string id PK
+        string userId FK
+        string provider
+        string providerAccountId
+        string type
+    }
+    Session {
+        string id PK
+        string userId FK
+        string sessionToken
+        datetime expires
+    }
+    VerificationToken {
+        string identifier
+        string token
+        datetime expires
+    }
+    Invitation {
+        string id PK
+        string householdId FK
+        string memberId FK
+        string senderUserId FK
+        string email
+        string token
+        datetime expiresAt
+        datetime acceptedAt
     }
     Household {
         string id PK
@@ -310,6 +396,9 @@ erDiagram
         string householdId FK
         string preferredSupermarket
         decimal weeklyBudget
+        string aiProvider
+        string aiModel
+        string aiApiKey
     }
     FamilyConstraint {
         string id PK
@@ -332,6 +421,7 @@ erDiagram
     Thread {
         string id PK
         string householdId FK
+        string userId FK
         string title
     }
     MessageMetadata {
@@ -471,10 +561,36 @@ erDiagram
         string source
         string sourceFileUrl
     }
+    AutomationOutbox {
+        string id PK
+        string householdId FK
+        string type
+        json payload
+        string source
+        enum status
+        int attempts
+        datetime processAt
+        datetime processedAt
+    }
+    WatchedSource {
+        string id PK
+        string householdId FK
+        string memberId FK
+        enum type
+        string name
+        json config
+        boolean enabled
+        datetime lastCheckedAt
+        string lastItemId
+    }
 
     User ||--o{ Household : "owns"
     User ||--o{ FamilyMember : "linked to"
     User ||--o{ CalendarConnection : "has"
+    User ||--o{ Account : "has"
+    User ||--o{ Session : "has"
+    User ||--o{ Thread : "owns"
+    User ||--o{ Invitation : "sends"
 
     Household ||--|| HouseholdPreferences : "has"
     Household ||--o{ FamilyMember : "has"
@@ -490,6 +606,7 @@ erDiagram
     Household ||--o{ Reminder : "has"
     Household ||--o{ Document : "has"
     Household ||--o{ ActionProposal : "has"
+    Household ||--o{ Invitation : "has"
 
     FamilyMember ||--o{ FamilyConstraint : "has"
     FamilyMember ||--o{ CalendarEvent : "owns"
@@ -499,6 +616,7 @@ erDiagram
     FamilyMember ||--o{ CalendarConnection : "has"
     FamilyMember ||--o{ Document : "owns"
     FamilyMember ||--o{ ActionProposal : "owns"
+    FamilyMember ||--o| Invitation : "invited via"
 
     Thread ||--o{ MessageMetadata : "has"
     Thread ||--o{ ConversationMessage : "has"
@@ -514,6 +632,10 @@ erDiagram
     CalendarEvent ||--o{ ActionProposal : "sourced from"
 
     Document ||--o{ DocumentChunk : "split into"
+
+    Household ||--o{ AutomationOutbox : "queues"
+    Household ||--o{ WatchedSource : "monitors"
+    FamilyMember ||--o{ WatchedSource : "scoped to"
 ```
 
 ### Available Scripts

@@ -21,6 +21,7 @@ ${callerBlock}
 
 - **calendar** — gestiona el calendario familiar: crear, listar, actualizar y eliminar eventos (cumpleaños, colegio, turnos médicos, actividades)
 - **reminder** — crea y gestiona recordatorios del hogar: recordar tareas, vencimientos, medicamentos, compromisos
+- **notification** — envía mensajes y avisos por canales de entrega (principalmente WhatsApp) a uno o más integrantes
 - **recipe** — guarda y busca recetas, sugiere qué cocinar según la despensa disponible
 - **shopping** — gestiona listas de compras, genera la lista semanal a partir de recetas y descuenta la despensa
 - **family** — memoria estructurada del hogar: integrantes, restricciones, horarios, despensa (inventario de alimentos), perfiles y preferencias
@@ -34,10 +35,12 @@ ${callerBlock}
 Analizá el mensaje del usuario y elegí el agente más apropiado:
 
 - **eventos, agenda, citas, turnos médicos, cumpleaños, horarios, calendario, agendar, anotarlo en el calendario** (solo texto, sin imagen/adjunto) → **calendar**
-- **recordatorios, alertas, no olvidarse de, avisar, vencimiento de algo, que me recuerdes** → **reminder**
+- **recordatorios, alertas, no olvidarse de, vencimiento de algo, que me recuerdes** → **reminder**
+- **enviar mensaje, avisale a X, mandale por WhatsApp, comunicar a todos, notificar por chat** → **notification**
 - **recetas, cocina, qué cocinar, ingredientes, preparación** → **recipe**
 - **lista de compras, supermercado, qué comprar, ir al super, falta en casa** → **shopping**
 - **quiénes somos, integrantes de la familia, restricciones dietarias, despensa, inventario, alergias, preferencias** → **family**
+- **quién soy yo, cuál es mi cumpleaños, mis datos, mi perfil, información sobre mí** → **family**
 - **imágenes, fotos, flyers, PDFs, circulares del colegio, correos, páginas web, documentos adjuntos, OCR, extraer información de** → **inbox**
 - **qué hay pendiente de revisar, propuestas pendientes, qué me llegó, revisar inbox** → **inbox**
 - **respuestas cortas de confirmación en contexto de extracción de una imagen/documento** (ej: "si", "dale", "ok", "sí", "hacelo", "perfecto") cuando el turno anterior fue de inbox → **inbox** (dejar que inbox concluya el flujo si todavía falta algo, o simplemente confirmar)

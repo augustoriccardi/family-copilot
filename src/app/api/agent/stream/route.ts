@@ -19,6 +19,7 @@ export async function GET(req: NextRequest) {
   const userContent = searchParams.get("content") || "";
   const threadId = searchParams.get("threadId") || "unknown";
   const model = searchParams.get("model") || undefined;
+  const clientProvider = searchParams.get("provider") || undefined;
   const allowTool = searchParams.get("allowTool") as "allow" | "deny" | null;
   const toolsParam = searchParams.get("tools") || "";
   const approveAllTools = searchParams.get("approveAllTools") === "true";
@@ -45,6 +46,22 @@ export async function GET(req: NextRequest) {
   // To switch to auth: update resolveWebIdentity() in src/lib/identity/web-identity.ts only.
   const { householdId, callerId, callerName, callerRole } = await resolveWebIdentity(req, threadId);
 
+  // Load AI config saved in household preferences (provider, model, apiKey)
+  let savedProvider: string | undefined;
+  let savedModel: string | undefined;
+  let savedApiKey: string | undefined;
+  if (householdId) {
+    const prefs = await prisma.householdPreferences
+      .findUnique({
+        where: { householdId },
+        select: { aiProvider: true, aiModel: true, aiApiKey: true },
+      })
+      .catch(() => null);
+    savedProvider = prefs?.aiProvider ?? undefined;
+    savedModel = prefs?.aiModel ?? undefined;
+    savedApiKey = prefs?.aiApiKey ?? undefined;
+  }
+
   const encoder = new TextEncoder();
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
@@ -62,7 +79,10 @@ export async function GET(req: NextRequest) {
             threadId,
             userText: userContent,
             opts: {
-              model,
+              // Saved household config takes priority; client values are fallback only
+              model: savedModel ?? model,
+              provider: savedProvider ?? clientProvider,
+              apiKey: savedApiKey,
               tools,
               allowTool: allowTool || undefined,
               approveAllTools,

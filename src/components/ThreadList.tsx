@@ -13,6 +13,7 @@ import {
   Settings,
   Trash2,
   CalendarDays,
+  Rss,
 } from "lucide-react";
 import { useRouter, usePathname } from "next/navigation";
 import Link from "next/link";
@@ -20,9 +21,10 @@ import { ProposalInbox } from "./ProposalInbox";
 
 interface ThreadListProps {
   onOpenMCPConfig: () => void;
+  onOpenWatchedSources: () => void;
 }
 
-export function ThreadList({ onOpenMCPConfig }: ThreadListProps) {
+export function ThreadList({ onOpenMCPConfig, onOpenWatchedSources }: ThreadListProps) {
   const { threads, createThread, deleteThread, refetchThreads } = useThreads();
   const [isCreating, setIsCreating] = useState(false);
   const [filter, setFilter] = useState("");
@@ -253,6 +255,13 @@ export function ThreadList({ onOpenMCPConfig }: ThreadListProps) {
         >
           <Settings className="h-4 w-4" />
           Configure MCP Servers
+        </button>
+        <button
+          onClick={onOpenWatchedSources}
+          className="flex w-full cursor-pointer items-center justify-center gap-2 rounded-md bg-gray-50 px-3 py-2 text-xs font-medium text-gray-600 transition-colors hover:bg-gray-100"
+        >
+          <Rss className="h-4 w-4" />
+          Fuentes externas
         </button>
       </div>
     </nav>

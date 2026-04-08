@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import type { MessageOptions, MessageResponse, AIMessageData } from "@/types/message";
+import type { MessageOptions, MessageResponse, AIMessageData, Thread } from "@/types/message";
 import { createMessageStream, fetchMessageHistory } from "@/services/chatService";
 
 interface UseChatThreadOptions {
@@ -53,8 +53,13 @@ export function useChatThread({ threadId }: UseChatThreadOptions): UseChatThread
 
   // Shared function to handle SSE streaming for both sendMessage and approveToolExecution
   const handleStreamResponse = useCallback(
-    async (streamParams: { threadId: string; text?: string; opts?: MessageOptions }) => {
-      const { threadId, text = "", opts } = streamParams;
+    async (streamParams: {
+      threadId: string;
+      text?: string;
+      opts?: MessageOptions;
+      isFirstMessage?: boolean;
+    }) => {
+      const { threadId, text = "", opts, isFirstMessage } = streamParams;
 
       setIsSending(true);
       setSendError(null);
@@ -128,6 +133,25 @@ export function useChatThread({ threadId }: UseChatThreadOptions): UseChatThread
           currentMessageRef.current = null;
           stream.close();
           streamRef.current = null;
+
+          // Auto-generate title after first user message
+          if (isFirstMessage && text) {
+            try {
+              const res = await fetch(`/api/agent/threads/${threadId}/generate-title`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ firstMessage: text }),
+              });
+              if (res.ok) {
+                const { title } = (await res.json()) as { title: string };
+                queryClient.setQueryData(["threads"], (old: Thread[] = []) =>
+                  old.map((t) => (t.id === threadId ? { ...t, title } : t)),
+                );
+              }
+            } catch {
+              // Non-fatal: title stays as "New thread"
+            }
+          }
         });
 
         stream.addEventListener("error", async (ev: Event) => {
@@ -174,6 +198,11 @@ export function useChatThread({ threadId }: UseChatThreadOptions): UseChatThread
       // Guard: require a thread to target
       if (!threadId) return;
 
+      // Detect first message before optimistic update
+      const currentMessages =
+        queryClient.getQueryData<MessageResponse[]>(["messages", threadId]) ?? [];
+      const isFirstMessage = currentMessages.length === 0;
+
       // Optimistic UI: append the user's message immediately
       const tempId = `temp-${Date.now()}`;
       const userMessage: MessageResponse = {
@@ -190,7 +219,7 @@ export function useChatThread({ threadId }: UseChatThreadOptions): UseChatThread
       ]);
 
       // Handle the streaming response
-      await handleStreamResponse({ threadId, text, opts });
+      await handleStreamResponse({ threadId, text, opts, isFirstMessage });
     },
     [threadId, queryClient, handleStreamResponse],
   );

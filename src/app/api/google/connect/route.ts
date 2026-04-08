@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAppUrl } from "@/lib/config/app-url";
+import { auth } from "@/auth";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -10,18 +11,23 @@ const SCOPES = [
 ];
 
 /**
- * GET /api/google/connect?memberId=xxx
+ * GET /api/google/connect
  *
- * Generates a Google OAuth URL for the given family member.
- * The memberId is passed as OAuth state so the callback can associate
- * the tokens with the correct FamilyMember.
+ * Generates a Google OAuth URL tied to the session user.
+ * The state param carries the userId so the callback re-associates the
+ * tokens with the correct User (and their linked FamilyMember, if any).
+ *
+ * Falls back to ?memberId=xxx for backward compatibility.
  */
 export async function GET(request: NextRequest): Promise<NextResponse> {
+  const session = await auth();
   const { searchParams } = new URL(request.url);
-  const memberId = searchParams.get("memberId");
 
-  if (!memberId) {
-    return NextResponse.json({ error: "memberId is required" }, { status: 400 });
+  // Prefer session userId; fall back to explicit memberId param
+  const state = session?.user?.id ?? searchParams.get("memberId");
+
+  if (!state) {
+    return NextResponse.json({ error: "No autenticado" }, { status: 401 });
   }
 
   const { GOOGLE_CLIENT_ID } = process.env;
@@ -39,7 +45,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     scope: SCOPES.join(" "),
     access_type: "offline",
     prompt: "consent",
-    state: memberId,
+    state,
   });
 
   const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;

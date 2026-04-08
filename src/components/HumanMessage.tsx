@@ -8,7 +8,7 @@ import type {
 import { FileText, Image as ImageIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { getMessageContent } from "@/services/messageUtils";
-import { useUISettings } from "@/contexts/UISettingsContext";
+import { useSession } from "next-auth/react";
 
 function getInitials(name: string): string {
   return name
@@ -45,11 +45,10 @@ type ContentItem = ImageUrlContentItem | TextContentItem | { type: string };
 
 export const HumanMessage = ({ message }: HumanMessageProps) => {
   const data = message.data as BasicMessageData;
-  const { caller } = useUISettings();
-  const displayName = caller?.callerName ?? "Tú";
+  const { data: session } = useSession();
+  const displayName = session?.user?.name ?? "Tú";
   const initials = getInitials(displayName);
-  // Use the member's configured color if available, otherwise fall back to deterministic hash color
-  const bgColor = caller?.callerColor ?? avatarColor(displayName);
+  const bgColor = avatarColor(displayName);
   const attachments = [...(data.attachments || [])];
 
   // Extract attachments from content array (for messages loaded from checkpoint)
@@ -115,7 +114,7 @@ export const HumanMessage = ({ message }: HumanMessageProps) => {
                       <a
                         href={attachment.url}
                         download={attachment.name}
-                        className="max-w-[150px] truncate hover:underline"
+                        className="max-w-30 truncate hover:underline"
                       >
                         {attachment.name}
                       </a>
@@ -133,14 +132,33 @@ export const HumanMessage = ({ message }: HumanMessageProps) => {
       </div>
       <div
         className={cn(
-          "flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-white",
-          // If color is a hex value, use inline style; if it's a Tailwind class, use className
-          !bgColor?.startsWith("#") && bgColor,
+          "flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-full text-white",
+          !session?.user?.image && !bgColor?.startsWith("#") && bgColor,
         )}
-        style={bgColor?.startsWith("#") ? { backgroundColor: bgColor } : undefined}
+        style={
+          !session?.user?.image && bgColor?.startsWith("#")
+            ? { backgroundColor: bgColor }
+            : undefined
+        }
         title={displayName}
       >
-        <span className="text-sm font-semibold">{initials}</span>
+        {session?.user?.image ? (
+          <img
+            src={session.user.image}
+            alt={displayName}
+            className="h-full w-full object-cover"
+            onError={(e) => {
+              e.currentTarget.style.display = "none";
+              e.currentTarget.parentElement!.querySelector("span")!.style.display = "";
+            }}
+          />
+        ) : null}
+        <span
+          className="text-sm font-semibold"
+          style={session?.user?.image ? { display: "none" } : undefined}
+        >
+          {initials}
+        </span>
       </div>
     </div>
   );

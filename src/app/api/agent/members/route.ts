@@ -35,9 +35,25 @@ export async function GET(req: NextRequest) {
 
   const members = await prisma.familyMember.findMany({
     where: { householdId },
-    select: { id: true, name: true, nickname: true, role: true, color: true, isMinor: true },
+    select: {
+      id: true,
+      name: true,
+      nickname: true,
+      role: true,
+      color: true,
+      isMinor: true,
+      linkedUserId: true,
+      linkedUser: { select: { image: true } },
+    },
     orderBy: { createdAt: "asc" },
   });
 
-  return NextResponse.json({ members });
+  // Map to include avatarUrl (User.image if linked, else null)
+  const membersWithAvatar = members.map((m) => ({
+    ...m,
+    avatarUrl: m.linkedUser?.image ?? null,
+    linkedUser: undefined, // remove nested object from response
+  }));
+
+  return NextResponse.json({ members: membersWithAvatar });
 }

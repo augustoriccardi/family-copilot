@@ -4,6 +4,7 @@ import type { AgentContext } from "../family/index";
 import { createCalendarEventTool } from "../calendar/index";
 import { createReminderTool } from "../reminders/index";
 import { addItemsToShoppingListTool } from "../shopping/index";
+import { dispatch } from "@/lib/automation/dispatcher";
 
 export type { ProposalType, ProposalStatus };
 
@@ -170,6 +171,22 @@ async function dispatchEntityCreation(
       ctx,
     );
     if ("error" in result) return { entityError: result.error as string };
+
+    // Queue side effects (auto-create reminders) via the outbox — best-effort
+    await dispatch({
+      type: "event.created",
+      householdId: ctx.householdId,
+      payload: {
+        eventId: (result as { eventId?: string }).eventId,
+        householdId: ctx.householdId,
+        memberId: resolvedMemberId,
+        title: String(p.title ?? fallbackTitle ?? "Evento"),
+        startsAt: startDateTime,
+        eventType: String(p.eventType ?? "FAMILY"),
+      },
+      source: "agent",
+    }).catch((err) => console.error("[automation] dispatch event.created failed:", err));
+
     return { entity: result };
   }
 

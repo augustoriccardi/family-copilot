@@ -7,6 +7,7 @@ export interface CreateChatModelOptions {
   provider?: string; // 'openai' | 'google' | others later
   model: string;
   temperature?: number;
+  apiKey?: string; // override default env var key
 }
 
 /**
@@ -16,18 +17,20 @@ export function createChatModel({
   provider = "google",
   model,
   temperature = 1,
+  apiKey,
 }: CreateChatModelOptions): BaseChatModel {
   switch (provider) {
     case "openai":
-      return new ChatOpenAI({ model, temperature });
+      return new ChatOpenAI({ model, temperature, ...(apiKey ? { apiKey } : {}) });
     case "google":
     default:
-      return new ChatGoogleGenerativeAI({ model, temperature });
+      return new ChatGoogleGenerativeAI({ model, temperature, ...(apiKey ? { apiKey } : {}) });
   }
 }
 export interface AgentConfigOptions {
   model?: string;
   provider?: string; // 'google' | 'openai' etc.
+  apiKey?: string; // override API key (loaded from household preferences)
   systemPrompt?: string; // system prompt override
   tools?: unknown[]; // tools from registry or direct tool objects
   approveAllTools?: boolean; // if true, skip tool approval prompts

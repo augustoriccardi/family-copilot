@@ -35,6 +35,8 @@ export async function streamResponse(params: {
 
     const agent = await ensureAgent({
       model: opts?.model,
+      provider: opts?.provider,
+      apiKey: opts?.apiKey,
       tools: opts?.tools,
       approveAllTools: opts?.approveAllTools,
       householdId: opts?.householdId,
@@ -103,6 +105,8 @@ export async function streamResponse(params: {
 
   const agent = await ensureAgent({
     model: opts?.model,
+    provider: opts?.provider,
+    apiKey: opts?.apiKey,
     tools: opts?.tools,
     approveAllTools: opts?.approveAllTools,
     householdId: opts?.householdId,

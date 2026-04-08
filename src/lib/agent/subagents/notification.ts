@@ -10,8 +10,8 @@ import {
 } from "../util";
 import { NOTIFICATIONS_AGENT_PROMPT } from "../prompts/notification";
 import { resolveHouseholdId } from "../../tools/family/index";
-import { createReminderTool } from "../../tools/reminders/index";
 import { sendWhatsAppMessage } from "../../whatsapp/whatsapp-service";
+import { sendEmail } from "../../email/email-service";
 import prisma from "../../database/prisma";
 
 const NO_HOUSEHOLD = JSON.stringify({
@@ -21,7 +21,7 @@ const NO_HOUSEHOLD = JSON.stringify({
 
 function buildNotificationsTools(householdId: string | null) {
   const noHousehold = !householdId;
-  const ctx = { householdId: householdId ?? "" };
+  const householdCtx = householdId ?? "";
 
   return [
     new DynamicStructuredTool({
@@ -53,7 +53,7 @@ function buildNotificationsTools(householdId: string | null) {
       func: async (args) => {
         if (noHousehold) return NO_HOUSEHOLD;
         const member = await prisma.familyMember.findFirst({
-          where: { id: args.memberId, householdId: ctx.householdId },
+          where: { id: args.memberId, householdId: householdCtx },
           select: { name: true, whatsappPhone: true },
         });
         if (!member) return JSON.stringify({ error: "Integrante no encontrado." });
@@ -81,7 +81,7 @@ function buildNotificationsTools(householdId: string | null) {
       func: async (args) => {
         if (noHousehold) return NO_HOUSEHOLD;
         const members = await prisma.familyMember.findMany({
-          where: { householdId: ctx.householdId, whatsappPhone: { not: null } },
+          where: { householdId: householdCtx, whatsappPhone: { not: null } },
           select: { name: true, whatsappPhone: true },
         });
         if (members.length === 0) {
@@ -106,17 +106,74 @@ function buildNotificationsTools(householdId: string | null) {
     }),
 
     new DynamicStructuredTool({
-      name: "create_reminder",
+      name: "send_email_to_member",
       description:
-        "Crea un recordatorio para un integrante del hogar o para toda la familia, con título, descripción y fecha/hora.",
+        "Envía un email a un integrante del hogar usando su dirección de correo registrada. Si no tiene email configurado, informa el error.",
       schema: z.object({
-        title: z.string().describe("Título del recordatorio"),
-        description: z.string().optional().describe("Descripción adicional o cuerpo del mensaje"),
-        dueAt: z.string().describe("Fecha y hora de vencimiento en formato ISO 8601"),
-        memberId: z.string().optional().describe("ID del integrante al que aplica (opcional)"),
+        memberId: z.string().describe("ID del integrante del hogar"),
+        subject: z.string().describe("Asunto del email"),
+        message: z.string().describe("Cuerpo del mensaje en texto plano"),
       }),
-      func: async (args) =>
-        noHousehold ? NO_HOUSEHOLD : JSON.stringify(await createReminderTool(args, ctx)),
+      func: async (args) => {
+        if (noHousehold) return NO_HOUSEHOLD;
+        const member = await prisma.familyMember.findFirst({
+          where: { id: args.memberId, householdId: householdCtx },
+          select: { name: true, email: true, linkedUser: { select: { email: true } } },
+        });
+        if (!member) return JSON.stringify({ error: "Integrante no encontrado." });
+        const email = member.email ?? member.linkedUser?.email ?? null;
+        if (!email) {
+          return JSON.stringify({
+            error: `${member.name} no tiene dirección de email configurada.`,
+          });
+        }
+        try {
+          await sendEmail({ to: email, subject: args.subject, text: args.message });
+          return JSON.stringify({ sent: true, to: member.name, email });
+        } catch (e) {
+          return JSON.stringify({ sent: false, error: (e as Error).message });
+        }
+      },
+    }),
+
+    new DynamicStructuredTool({
+      name: "send_email_to_all_members",
+      description:
+        "Envía un email a todos los integrantes del hogar que tengan dirección de correo configurada.",
+      schema: z.object({
+        subject: z.string().describe("Asunto del email"),
+        message: z.string().describe("Cuerpo del mensaje en texto plano"),
+      }),
+      func: async (args) => {
+        if (noHousehold) return NO_HOUSEHOLD;
+        const members = await prisma.familyMember.findMany({
+          where: { householdId: householdCtx },
+          select: { name: true, email: true, linkedUser: { select: { email: true } } },
+        });
+        // Use explicit contact email; fall back to linked User's auth email
+        const withEmail = members
+          .map((m) => ({ name: m.name, email: m.email ?? m.linkedUser?.email ?? null }))
+          .filter((m): m is { name: string; email: string } => m.email !== null);
+        if (withEmail.length === 0) {
+          return JSON.stringify({
+            error: "Ningún integrante del hogar tiene dirección de email configurada.",
+          });
+        }
+        const results = await Promise.allSettled(
+          withEmail.map(async (m) =>
+            sendEmail({ to: m.email, subject: args.subject, text: args.message }).then(
+              () => m.name,
+            ),
+          ),
+        );
+        const sent = results
+          .filter((r): r is PromiseFulfilledResult<string> => r.status === "fulfilled")
+          .map((r) => r.value);
+        const failed = results
+          .filter((r): r is PromiseRejectedResult => r.status === "rejected")
+          .map((_, i) => withEmail[i].name);
+        return JSON.stringify({ sent, failed });
+      },
     }),
   ];
 }
@@ -125,7 +182,7 @@ export async function buildNotificationsAgent(householdId?: string, cfg?: AgentC
   const resolvedId = await resolveHouseholdId(householdId);
   const provider = cfg?.provider || DEFAULT_MODEL_PROVIDER;
   const modelName = cfg?.model || DEFAULT_MODEL_NAME;
-  const llm = createChatModel({ provider, model: modelName, temperature: 1 });
+  const llm = createChatModel({ provider, model: modelName, temperature: 1, apiKey: cfg?.apiKey });
 
   return new AgentBuilder({
     llm,
